@@ -859,7 +859,14 @@
     currentZones.forEach(z=>{
       if(!zoneTypeVisible(z)) return;
       const x1 = timeToX(z.c1Time);
-      const x2raw = timeToX(z.endTime);
+      // Active zones have no endTime (null). In that case, extend the
+      // rectangle forward instead of converting null to time 0, which
+      // collapses the zone to a ~3px sliver. Closed/filled zones keep
+      // their actual endTime.
+      const zoneEndTime = Number.isFinite(Number(z.endTime))
+        ? Number(z.endTime)
+        : z.c1Time + MAX_EXTEND_CANDLES * tfMin * 60000;
+      const x2raw = timeToX(zoneEndTime);
       const x2 = Math.max(x2raw, x1+3);
       if(x2 < marginLeft || x1 > marginLeft+plotW) return;
       const cx1 = clamp(x1, marginLeft, marginLeft+plotW);
