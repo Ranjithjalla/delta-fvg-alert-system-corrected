@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Imbalance Ledger — BTCUSD FVG / IFVG Scanner</title>
+<style>
+  :root{
+    --bg:#0A0D12;
+    --panel:#10141B;
+    --panel-2:#151A22;
+    --border:#1E242E;
+    --text:#E7EAF0;
+    --text-dim:#7A8494;
+    --text-faint:#4B5563;
+    --bull:#26D8A3;
+    --bear:#FF5D6C;
+    --ifvg-bull:#F2B84B;
+    --ifvg-bear:#9D7BFF;
+    --accent:#26D8A3;
+    --mono: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    overflow:hidden;
+  }
+  #app{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+  }
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    display:flex;
+    align-items:center;
+    gap:22px;
+    padding:10px 16px;
+    background:var(--panel);
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+    row-gap:8px;
+  }
+  .brand{
+    display:flex;
+    flex-direction:column;
+    margin-right:6px;
+  }
+  .brand .title{
+    font-size:14px;
+    font-weight:700;
+    letter-spacing:0.02em;
+  }
+  .brand .title .g{ color:var(--bull); }
+  .brand .subtitle{
+    font-size:10.5px;
+    color:var(--text-dim);
+    font-family:var(--mono);
+    letter-spacing:0.01em;
+    display:flex; align-items:center; gap:6px;
+  }
+  .dot{ width:6px; height:6px; border-radius:50%; background:var(--text-faint); display:inline-block; }
+  .dot.live{ background:var(--bull); box-shadow:0 0 6px var(--bull); animation:pulse 1.6s infinite; }
+  .dot.err{ background:var(--bear); }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+
+  .tf-tabs{ display:flex; gap:4px; background:var(--panel-2); padding:3px; border-radius:8px; border:1px solid var(--border); }
+  .tf-tab{
+    appearance:none; border:none; background:transparent; color:var(--text-dim);
+    font-family:var(--mono); font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px; cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  .tf-tab:hover{ color:var(--text); }
+  .tf-tab.active{ background:var(--bull); color:#04140F; }
+
+  .control-group{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-dim); }
+  .control-group select{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:5px 8px; font-family:var(--mono); font-size:11.5px; cursor:pointer;
+  }
+  .spacer{ flex:1; }
+  .stat{ font-family:var(--mono); font-size:13px; color:var(--text-dim); }
+  .stat b{ color:var(--text); font-weight:700; }
+  .live-btn{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.02em;
+    background:transparent; color:var(--text-faint); border:1px solid var(--border); border-radius:6px;
+    padding:6px 11px; cursor:pointer; transition:all .15s;
+  }
+  .live-btn.off-live{ color:var(--bear); border-color:var(--bear); }
+  .live-btn.off-live:hover{ background:rgba(255,93,108,0.12); }
+  .live-btn.on-live{ color:var(--bull); border-color:var(--border); cursor:default; }
+
+  /* ---------- Body layout ---------- */
+  .body{ flex:1; display:flex; min-height:0; }
+  .chart-wrap{ flex:1; position:relative; min-width:0; }
+  #chart{ display:block; width:100%; height:100%; cursor:crosshair; }
+
+  .hint{
+    position:absolute; left:14px; bottom:12px; font-family:var(--mono); font-size:10.5px;
+    color:var(--text-faint); pointer-events:none; letter-spacing:0.02em;
+  }
+
+  .loading-msg{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:13px; color:var(--text-dim); flex-direction:column; gap:10px; text-align:center; padding:20px;
+  }
+  .loading-msg .err-title{ color:var(--bear); font-weight:700; }
+  .loading-msg a{ color:var(--bull); }
+
+  .tooltip{
+    position:absolute; pointer-events:none; background:rgba(16,20,27,0.95);
+    border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--mono);
+    font-size:11px; line-height:1.6; color:var(--text); box-shadow:0 6px 20px rgba(0,0,0,0.4); display:none; z-index:5;
+    min-width:150px;
+  }
+  .tooltip .row{ display:flex; justify-content:space-between; gap:14px; }
+  .tooltip .row span:first-child{ color:var(--text-dim); }
+
+  /* ---------- Right-click context menu ---------- */
+  .ctx-menu{
+    position:fixed; z-index:50; background:var(--panel-2); border:1px solid var(--border);
+    border-radius:8px; padding:4px; box-shadow:0 8px 24px rgba(0,0,0,0.5); min-width:160px;
+  }
+  .ctx-item{
+    padding:8px 12px; font-size:12px; color:var(--text); border-radius:5px; cursor:pointer;
+    font-family:var(--sans); user-select:none;
+  }
+  .ctx-item:hover{ background:var(--panel); }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    width:290px; flex-shrink:0; background:var(--panel); border-left:1px solid var(--border);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .side-section{ padding:12px 14px; border-bottom:1px solid var(--border); }
+  .side-title{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-dim); margin-bottom:10px; font-weight:700; }
+
+  .checks{ display:flex; flex-direction:column; gap:8px; }
+  .chk{ display:flex; align-items:center; gap:8px; font-size:12px; cursor:pointer; user-select:none; }
+  .chk input{ accent-color:var(--bull); width:14px; height:14px; cursor:pointer; }
+  .swatch{ width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+
+  .alert-input{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:7px 9px; font-family:var(--mono); font-size:11.5px; width:100%;
+  }
+  .alert-note{ font-size:10px; color:var(--text-faint); line-height:1.5; }
+  .alert-log{ display:flex; flex-direction:column; gap:4px; max-height:96px; overflow-y:auto; }
+  .alert-log-item{
+    font-size:10px; font-family:var(--mono); color:var(--text-dim);
+    border-left:2px solid var(--bull); padding-left:6px;
+  }
+  .alert-log-empty{ font-size:10px; font-family:var(--mono); color:var(--text-faint); }
+
+  .ledger{ flex:1; overflow-y:auto; min-height:0; }
+  .ledger::-webkit-scrollbar{ width:8px; }
+  .ledger::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px; }
+  .ledger-empty{ padding:20px 14px; color:var(--text-faint); font-size:11.5px; font-family:var(--mono); }
+
+  .zone-item{
+    padding:9px 14px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s;
+    display:flex; flex-direction:column; gap:3px;
+  }
+  .zone-item:hover{ background:var(--panel-2); }
+  .zone-top{ display:flex; justify-content:space-between; align-items:center; }
+  .zone-dir{ font-size:11px; font-weight:700; font-family:var(--mono); }
+  .zone-dir.bullish{ color:var(--bull); }
+  .zone-dir.bearish{ color:var(--bear); }
+  .zone-dir.ifvg-bullish{ color:var(--ifvg-bull); }
+  .zone-dir.ifvg-bearish{ color:var(--ifvg-bear); }
+  .zone-badge{
+    font-size:9px; font-family:var(--mono); padding:2px 6px; border-radius:4px; text-transform:uppercase;
+    letter-spacing:0.03em; border:1px solid var(--border); color:var(--text-dim);
+  }
+  .zone-range{ font-size:11px; font-family:var(--mono); color:var(--text-dim); }
+  .zone-time{ font-size:10px; font-family:var(--mono); color:var(--text-faint); }
+
+  ::selection{ background:rgba(38,216,163,0.3); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="title">imbalance<span class="g">/</span>ledger</div>
+      <div class="subtitle"><span class="dot" id="liveDot"></span><span id="statusText">connecting to Delta Exchange…</span></div>
+    </div>
+
+    <div class="tf-tabs" id="tfTabs"></div>
+
+    <div class="control-group">
+      <label>Fill&nbsp;rule</label>
+      <select id="fillRule">
+        <option value="touch">Touch</option>
+        <option value="50">50% fill</option>
+        <option value="full" selected>Full fill</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Invalidate&nbsp;on</label>
+      <select id="invRule">
+        <option value="close" selected>Candle close</option>
+        <option value="wick">Wick break</option>
+      </select>
+    </div>
+
+    <div class="spacer"></div>
+    <button class="live-btn" id="goLiveBtn" title="Return to the latest candles and resume auto-scroll">● Go Live</button>
+    <div class="stat" id="lastPriceStat">BTCUSD —</div>
+  </div>
+
+  <div class="body">
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div class="tooltip" id="tooltip"></div>
+      <div class="hint">scroll chart to zoom time · scroll price axis to zoom price · drag to pan · dbl-click axis/chart to reset · right-click for menu · press &amp; hold for candle detail · live BTCUSD via your backend</div>
+      <div class="loading-msg" id="loadingMsg">loading BTCUSD history from backend…</div>
+    </div>
+
+    <div class="sidebar">
+      <div class="side-section">
+        <div class="side-title">Zone types</div>
+        <div class="checks">
+          <label class="chk"><input type="checkbox" data-type="bullFVG" checked><span class="swatch" style="background:var(--bull)"></span>Bullish FVG</label>
+          <label class="chk"><input type="checkbox" data-type="bearFVG" checked><span class="swatch" style="background:var(--bear)"></span>Bearish FVG</label>
+          <label class="chk"><input type="checkbox" data-type="bullIFVG" checked><span class="swatch" style="background:var(--ifvg-bull)"></span>Bullish IFVG</label>
+          <label class="chk"><input type="checkbox" data-type="bearIFVG" checked><span class="swatch" style="background:var(--ifvg-bear)"></span>Bearish IFVG</label>
+        </div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-title">Push alerts (works with browser closed)</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <button class="live-btn off-live" id="subscribeBtn" style="width:100%;">Enable push notifications</button>
+          <div id="pushStatus" class="alert-note">Alerts are detected and sent by a 24/7 server — your phone will get them even if this tab is closed.</div>
+          <div class="checks" id="tfAlertChecks">
+            <label class="chk"><input type="checkbox" data-alert-tf="5m" checked>5M</label>
+            <label class="chk"><input type="checkbox" data-alert-tf="15m" checked>15M</label>
+            <label class="chk"><input type="checkbox" data-alert-tf="1h" checked>1H</label>
+            <label class="chk"><input type="checkbox" data-alert-tf="4h" checked>4H</label>
+          </div>
+          <div class="checks" id="typeAlertChecks">
+            <label class="chk"><input type="checkbox" data-alert-type="bull_fvg" checked><span class="swatch" style="background:var(--bull)"></span>Bullish FVG</label>
+            <label class="chk"><input type="checkbox" data-alert-type="bear_fvg" checked><span class="swatch" style="background:var(--bear)"></span>Bearish FVG</label>
+            <label class="chk"><input type="checkbox" data-alert-type="bull_ifvg" checked><span class="swatch" style="background:var(--ifvg-bull)"></span>Bullish IFVG</label>
+            <label class="chk"><input type="checkbox" data-alert-type="bear_ifvg" checked><span class="swatch" style="background:var(--ifvg-bear)"></span>Bearish IFVG</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-section" style="padding-bottom:8px;">
+        <div class="side-title" id="ledgerTitle">Zones — 5M</div>
+      </div>
+      <div class="ledger" id="ledger"></div>
+    </div>
+  </div>
+
+  <div class="ctx-menu" id="ctxMenu" style="display:none;">
+    <div class="ctx-item" id="ctxReset">Reset chart</div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const SYMBOL = "BTCUSD";
+  const TF_MINUTES = { "5m":5, "15m":15, "1h":60, "4h":240 };
+  const TF_ORDER = ["5m","15m","1h","4h"];
+  const TF_LABEL = { "5m":"5M", "15m":"15M", "1h":"1H", "4h":"4H" };
+  const REST_LIMIT = 1000;
+
+  const dataByTF = { "5m":[], "15m":[], "1h":[], "4h":[] };
+  let zonesByTF = { "5m":[], "15m":[], "1h":[], "4h":[] };
+  let opts = { fillRule:"full", invRule:"close" };
+  let dataReady = false;
+
+  // ---- backend that runs FVG monitoring 24/7 and sends push notifications ----
+  // Point this at wherever you deploy the /backend folder (see README.md).
+  // Local dev default — change this to your deployed host in production.
+  // Same-origin by default: works locally (node server.js serves this page
+  // AND the API on the same port) and works once deployed to Render/etc.
+  // without needing to hand-edit this file per environment.
+  const BACKEND_URL = window.location.origin;
+
+  /* =========================================================
+     1. LIVE DATA — served entirely by our own backend now.
+     The backend is the ONLY thing that talks to Delta Exchange (see
+     backend/deltaFeed.js). The browser only talks to BACKEND_URL,
+     so the browser never needs direct access to the exchange
+     from this machine/browser directly (region block, ad blocker,
+     corporate proxy, etc.) as long as the backend can reach it.
+  ========================================================= */
+  async function fetchHistory(tf){
+    const res = await fetch(BACKEND_URL+"/api/candles?tf="+tf);
+    if(!res.ok) throw new Error("Backend error "+res.status+" — is `node server.js` running on "+BACKEND_URL+"?");
+    return await res.json();
+  }
+
+  async function loadAll(){
+    try{
+      const results = await Promise.all(TF_ORDER.map(tf => fetchHistory(tf)));
+      TF_ORDER.forEach((tf,i) => { dataByTF[tf] = results[i]; });
+      dataReady = true;
+      document.getElementById("loadingMsg").style.display = "none";
+      const zoneResults = await Promise.all(TF_ORDER.map(tf => fetch(BACKEND_URL+"/api/zones?tf="+tf).then(r=>r.json())));
+      TF_ORDER.forEach((tf,i) => { zonesByTF[tf] = zoneResults[i]; });
+      view = fitInitialView(currentTF);
+      applyDeepLinkIfPresent();
+      draw();
+      renderLedger();
+      updateGoLiveButton();
+      connectSocket();
+    } catch(err){
+      showError(err);
+    }
+  }
+
+  function showError(err){
+    const el = document.getElementById("loadingMsg");
+    el.style.display = "flex";
+    el.innerHTML = '<div class="err-title">Couldn\'t reach the backend</div>'+
+      '<div>'+(err && err.message ? err.message : "network request failed")+'</div>'+
+      '<div>Make sure <code>node server.js</code> is running and BACKEND_URL ('+BACKEND_URL+') in index.html matches. <a href="#" id="retryBtn">Retry</a></div>';
+    document.getElementById("retryBtn").addEventListener("click",(e)=>{ e.preventDefault(); location.reload(); });
+    document.getElementById("liveDot").className = "dot err";
+    document.getElementById("statusText").textContent = "disconnected";
+  }
+
+  let socket = null, reconnectTimer = null;
+  let livePrice = null, livePriceAt = 0;
+  function connectSocket(){
+    const wsUrl = BACKEND_URL.replace(/^http/i, "ws") + "/ws";
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      document.getElementById("liveDot").className = "dot live";
+      document.getElementById("statusText").textContent = "live";
+    };
+    socket.onclose = () => {
+      document.getElementById("liveDot").className = "dot err";
+      document.getElementById("statusText").textContent = "reconnecting…";
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectSocket, 3000);
+    };
+    socket.onerror = () => { socket.close(); };
+
+    socket.onmessage = (ev) => {
+      let msg;
+      try{ msg = JSON.parse(ev.data); } catch(e){ return; }
+      if(!msg) return;
+
+      if(msg.type === "candles") {
+        const tf = msg.tf;
+        if(!dataByTF[tf]) return;
+        dataByTF[tf] = msg.candles || [];
+        if(tf === currentTF && followLive) snapToLive();
+        requestDraw();
+        updateGoLiveButton();
+        return;
+      }
+
+      if(msg.type === "zones") {
+        if(zonesByTF[msg.tf]) zonesByTF[msg.tf] = msg.zones || [];
+        if(msg.tf === currentTF) renderLedger();
+        requestDraw();
+        return;
+      }
+
+      if(msg.type === "zone") {
+        const tf = msg.zone && msg.zone.timeframe;
+        if(tf && zonesByTF[tf]) {
+          const idx = zonesByTF[tf].findIndex(z => z.id === msg.zone.id);
+          if(idx >= 0) zonesByTF[tf][idx] = msg.zone;
+          else zonesByTF[tf].push(msg.zone);
+          if(tf === currentTF) renderLedger();
+          requestDraw();
+        }
+        return;
+      }
+
+      if(msg.type === "price") {
+        livePrice = Number(msg.price);
+        livePriceAt = Number(msg.time || Date.now());
+        const el = document.getElementById("lastPriceStat");
+        if(el && Number.isFinite(livePrice)) el.textContent = "BTCUSD " + fmtPrice(livePrice);
+        requestDraw();
+        return;
+      }
+
+      if(msg.type === "alert") {
+        const z = msg.zone;
+        if(z && zonesByTF[z.timeframe]) {
+          const idx = zonesByTF[z.timeframe].findIndex(x => x.id === z.id);
+          if(idx >= 0) zonesByTF[z.timeframe][idx] = z;
+          else zonesByTF[z.timeframe].push(z);
+          if(z.timeframe === currentTF) renderLedger();
+          requestDraw();
+        }
+      }
+    }
+  }
+
+  let drawQueued = false;
+  function requestDraw(){
+    if(drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(()=>{ drawQueued = false; draw(); });
+  }
+
+  /* =========================================================
+     2. FVG / IFVG DETECTION  (spec-exact, per timeframe)
+  ========================================================= */
+  // "C1 and C3 must contain wicks at least 5-10% of that body" — minimum
+  // wick-to-body ratio required on the two candles that define the gap
+  // boundary. Must match backend/fvgEngine.js WICK_MIN_PCT or the chart and
+  // the server-triggered alerts will disagree about which zones are valid.
+  const WICK_MIN_PCT = 0.05;
+  function bodySize(c){ return Math.abs(c.close-c.open) || 1e-8; }
+  function upperWick(c){ return c.high - Math.max(c.open,c.close); }
+  function lowerWick(c){ return Math.min(c.open,c.close) - c.low; }
+  function wickOk(c, side){
+    const wick = side==="upper" ? upperWick(c) : lowerWick(c);
+    return wick >= bodySize(c)*WICK_MIN_PCT;
+  }
+
+  function detectZones(candles, tfKey, o){
+    const zones = [];
+    const n = candles.length;
+    for(let i=1; i<n-1; i++){
+      const c1 = candles[i-1], c2 = candles[i], c3 = candles[i+1];
+      if((i+1) === n-1){
+        // C3 is the last candle in the series → still forming, cannot confirm a new FVG from it (no repaint)
+        continue;
+      }
+
+      let direction = null, upper = 0, lower = 0;
+      if(c1.high < c3.low){
+        if(!wickOk(c1,"upper") || !wickOk(c3,"lower")) continue;
+        direction = "bullish"; upper = c3.low; lower = c1.high;
+      }
+      else if(c1.low > c3.high){
+        if(!wickOk(c1,"lower") || !wickOk(c3,"upper")) continue;
+        direction = "bearish"; upper = c1.low; lower = c3.high;
+      }
+      if(!direction) continue;
+
+      const gapSize = upper - lower;
+      if(gapSize <= 0) continue;
+
+      const zone = {
+        id: tfKey+"_"+c1.time+"_"+direction,
+        timeframe: tfKey,
+        direction,
+        c1Time:c1.time, c2Time:c2.time, c3Time:c3.time,
+        creationTime:c3.time,
+        upperPrice:upper, lowerPrice:lower, gapSize,
+        status:"ACTIVE", fillStatus:"UNFILLED",
+        isIFVG:false, ifvgDirection:null, ifvgTime:null,
+        endTime:null
+      };
+
+      for(let j=i+2;j<n;j++){
+        const cand = candles[j];
+        const mid = (zone.upperPrice+zone.lowerPrice)/2;
+        const intrudes = cand.low <= zone.upperPrice && cand.high >= zone.lowerPrice;
+
+        if(intrudes && zone.fillStatus === "UNFILLED"){
+          zone.fillStatus = "PARTIALLY_FILLED";
+          if(zone.status === "ACTIVE") zone.status = "PARTIALLY_FILLED";
+        }
+
+        if(!zone.isIFVG){
+          // ---- invalidation: price breaks the far boundary → the SAME object flips into an IFVG (never a new zone)
+          let brokeReverse = false;
+          if(o.invRule === "close"){
+            if(direction === "bullish" && cand.close < zone.lowerPrice) brokeReverse = true;
+            if(direction === "bearish" && cand.close > zone.upperPrice) brokeReverse = true;
+          } else {
+            if(direction === "bullish" && cand.low < zone.lowerPrice) brokeReverse = true;
+            if(direction === "bearish" && cand.high > zone.upperPrice) brokeReverse = true;
+          }
+          if(brokeReverse){
+            zone.isIFVG = true;
+            zone.ifvgDirection = direction === "bullish" ? "bearish" : "bullish";
+            zone.status = "IFVG";
+            zone.ifvgTime = cand.time;
+            continue; // tracked as an IFVG from the next candle onward
+          }
+
+          // ---- fill: price comes back and satisfies the configured fill rule → the rectangle closes right here
+          let filledNow = false;
+          if(direction === "bullish"){
+            if(o.fillRule === "touch" && intrudes) filledNow = true;
+            if(o.fillRule === "50" && cand.low <= mid) filledNow = true;
+            if(cand.low <= zone.lowerPrice) filledNow = true; // a complete fill always counts, regardless of rule
+          } else {
+            if(o.fillRule === "touch" && intrudes) filledNow = true;
+            if(o.fillRule === "50" && cand.high >= mid) filledNow = true;
+            if(cand.high >= zone.upperPrice) filledNow = true;
+          }
+          if(filledNow){
+            zone.fillStatus = "FILLED";
+            zone.status = "FILLED";
+            zone.endTime = cand.time;
+            break;
+          }
+        } else {
+          // ---- IFVG mitigation: price closes back through the zone → the rectangle closes right here
+          let mitigated = false;
+          if(o.invRule === "close"){
+            if(zone.ifvgDirection === "bearish" && cand.close > zone.upperPrice) mitigated = true;
+            if(zone.ifvgDirection === "bullish" && cand.close < zone.lowerPrice) mitigated = true;
+          } else {
+            if(zone.ifvgDirection === "bearish" && cand.high > zone.upperPrice) mitigated = true;
+            if(zone.ifvgDirection === "bullish" && cand.low < zone.lowerPrice) mitigated = true;
+          }
+          if(mitigated){
+            zone.fillStatus = "FILLED";
+            zone.status = "MITIGATED";
+            zone.endTime = cand.time;
+            break;
+          }
+        }
+      }
+
+      zone.endTime = zone.endTime || candles[n-1].time;
+      const tfMin = TF_MINUTES[tfKey];
+      const capMs = zone.c1Time + MAX_EXTEND_CANDLES*tfMin*60000;
+      if(zone.endTime > capMs) zone.endTime = capMs;
+      zones.push(zone);
+    }
+    return zones;
+  }
+
+  function recomputeAllZones(){
+    // Authoritative zones come from the server. The browser never decides FVG/IFVG state.
+    return zonesByTF;
+  }
+
+  /* =========================================================
+     2b. PUSH SUBSCRIPTION — talks to the 24/7 backend in /backend.
+     Detection and delivery both happen server-side; this code only
+     registers the device once so the server knows where to push to.
+  ========================================================= */
+
+  // Identifies this browser/device to the backend so it knows which
+  // subscription + settings belong to you. Not used for FVG detection —
+  // only to tell push notifications apart per device.
+  function getUserId(){
+    let id = localStorage.getItem("fvgUserId");
+    if(!id){
+      id = (crypto.randomUUID ? crypto.randomUUID() : "u_"+Date.now()+"_"+Math.random().toString(36).slice(2));
+      localStorage.setItem("fvgUserId", id);
+    }
+    return id;
+  }
+  const userId = getUserId();
+
+  function urlBase64ToUint8Array(base64String){
+    const padding = "=".repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g,"+").replace(/_/g,"/");
+    const raw = atob(base64);
+    const arr = new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+
+  const subscribeBtn = document.getElementById("subscribeBtn");
+  const pushStatus = document.getElementById("pushStatus");
+
+  async function subscribeToPush(){
+    if(!("serviceWorker" in navigator) || !("PushManager" in window)){
+      pushStatus.textContent = "This browser doesn't support push notifications.";
+      return;
+    }
+    try{
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const perm = await Notification.requestPermission();
+      if(perm !== "granted"){
+        pushStatus.textContent = "Notification permission was denied — enable it in your browser/site settings to receive alerts.";
+        return;
+      }
+      const keyRes = await fetch(BACKEND_URL+"/api/vapid-public-key");
+      const { key } = await keyRes.json();
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key)
+      });
+      await fetch(BACKEND_URL+"/api/subscribe", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ userId, subscription })
+      });
+      subscribeBtn.textContent = "✓ Push enabled";
+      subscribeBtn.className = "live-btn on-live";
+      pushStatus.textContent = "Subscribed. You can close this tab — the server will still notify your phone.";
+      loadSettingsIntoUI();
+    } catch(err){
+      pushStatus.textContent = "Couldn't subscribe: " + err.message + ". Check BACKEND_URL is set correctly.";
+    }
+  }
+  subscribeBtn.addEventListener("click", subscribeToPush);
+
+  async function saveSettings(){
+    const s = { user_id: userId, push_enabled: 1 };
+    document.querySelectorAll("[data-alert-tf]").forEach(cb=>{ s["tf_"+cb.dataset.alertTf] = cb.checked?1:0; });
+    document.querySelectorAll("[data-alert-type]").forEach(cb=>{ s[cb.dataset.alertType] = cb.checked?1:0; });
+    try{
+      await fetch(BACKEND_URL+"/api/settings", {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(s)
+      });
+    } catch(e){ /* backend not reachable yet — settings will sync next time it is */ }
+  }
+  document.querySelectorAll("[data-alert-tf], [data-alert-type]").forEach(cb=>{
+    cb.addEventListener("change", saveSettings);
+  });
+
+  async function loadSettingsIntoUI(){
+    try{
+      const res = await fetch(BACKEND_URL+"/api/settings?userId="+encodeURIComponent(userId));
+      const s = await res.json();
+      document.querySelectorAll("[data-alert-tf]").forEach(cb=>{ cb.checked = !!s["tf_"+cb.dataset.alertTf]; });
+      document.querySelectorAll("[data-alert-type]").forEach(cb=>{ cb.checked = !!s[cb.dataset.alertType]; });
+    } catch(e){ /* backend not reachable yet */ }
+  }
+
+  // If this page was opened from a push notification (see sw.js
+  // notificationclick), jump straight to that zone.
+  async function applyDeepLinkIfPresent(){
+    const params = new URLSearchParams(location.search);
+    const tf = params.get("tf");
+    const fvgId = params.get("fvgId");
+    if(!tf || !fvgId || !TF_MINUTES[tf]) return;
+
+    currentTF = tf;
+    [...tfTabsEl.children].forEach(b=>b.classList.remove("active"));
+    const idx = TF_ORDER.indexOf(tf);
+    if(idx>=0) tfTabsEl.children[idx].classList.add("active");
+    view = fitInitialView(tf);
+    priceView.auto = true;
+    renderLedger();
+
+    try{
+      const res = await fetch(BACKEND_URL+"/api/zones?id="+encodeURIComponent(fvgId));
+      const z = await res.json();
+      if(z){
+        const tfMin = TF_MINUTES[tf];
+        const span = 40*tfMin;
+        view.pxPerMin = clamp((chartWrap.clientWidth-78)/span, 0.006, 60);
+        view.startMs = z.c1_time - span*60000*0.35;
+      }
+    } catch(e){ /* backend not reachable — chart still opens on the right timeframe */ }
+    draw();
+  }
+
+  /* =========================================================
+     3. STATE
+  ========================================================= */
+  let currentTF = "5m";
+  const MAX_EXTEND_CANDLES = 26; // how far a zone rectangle stretches right before it stops, even if still ACTIVE
+  const typeEnabledCfg = { bullFVG:true, bearFVG:true, bullIFVG:true, bearIFVG:true };
+
+  function zoneTypeVisible(z){
+    if(z.isIFVG) return z.ifvgDirection === "bullish" ? typeEnabledCfg.bullIFVG : typeEnabledCfg.bearIFVG;
+    return z.direction === "bullish" ? typeEnabledCfg.bullFVG : typeEnabledCfg.bearFVG;
+  }
+
+  const COLORS = { bull:"#26D8A3", bear:"#FF5D6C", ifvgBull:"#F2B84B", ifvgBear:"#9D7BFF" };
+  function zoneColor(z){
+    if(z.isIFVG) return z.ifvgDirection === "bullish" ? COLORS.ifvgBull : COLORS.ifvgBear;
+    return z.direction === "bullish" ? COLORS.bull : COLORS.bear;
+  }
+  function zoneAlpha(z){
+    if(z.status === "MITIGATED") return 0.05;
+    if(z.status === "FILLED") return 0.07;
+    if(z.isIFVG) return 0.20;
+    if(z.status === "PARTIALLY_FILLED") return 0.16;
+    return 0.20;
+  }
+
+  /* =========================================================
+     4. CANVAS CHART — pan / zoom, time-based x axis so any
+        timeframe's zones overlay correctly on any chart
+  ========================================================= */
+  const canvas = document.getElementById("chart");
+  const ctx = canvas.getContext("2d");
+  const chartWrap = document.querySelector(".chart-wrap");
+  const tooltip = document.getElementById("tooltip");
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+  function fitInitialView(tf){
+    const candles = dataByTF[tf];
+    if(!candles.length) return { startMs: Date.now()-3600000, pxPerMin: 1 };
+    const tfMin = TF_MINUTES[tf];
+    const visibleCount = 110;
+    const w = chartWrap.clientWidth || 900;
+    const plotW = w - 78;
+    const startIdx = Math.max(0, candles.length - visibleCount);
+    const pxPerMin = plotW / (visibleCount * tfMin);
+    return { startMs: candles[startIdx].time - tfMin*60000*2, pxPerMin: clamp(pxPerMin, 0.006, 60) };
+  }
+
+  let view = fitInitialView(currentTF);
+
+  // shifts the horizontal viewport so the newest candle sits at the right edge, keeping the current zoom level
+  function snapToLive(){
+    const candles = dataByTF[currentTF];
+    if(!candles.length) return;
+    const tfMin = TF_MINUTES[currentTF];
+    const plotW = (chartWrap.clientWidth||900) - 90;
+    const spanMs = (plotW/view.pxPerMin)*60000;
+    const lastEdge = candles[candles.length-1].time + tfMin*60000;
+    view.startMs = lastEdge - spanMs + tfMin*60000*3;
+  }
+  function goLive(){
+    followLive = true;
+    snapToLive();
+  }
+
+  function resetChart(){
+    // clears any manual pan/zoom on both axes and jumps back to the live edge
+    priceView.auto = true;
+    goLive();
+    draw();
+    updateGoLiveButton();
+  }
+
+  function resizeCanvas(){
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    const w = chartWrap.clientWidth, h = chartWrap.clientHeight;
+    canvas.width = Math.round(w*dpr);
+    canvas.height = Math.round(h*dpr);
+    canvas.style.width = w+"px";
+    canvas.style.height = h+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    draw();
+  }
+  new ResizeObserver(resizeCanvas).observe(chartWrap);
+
+  function niceStep(rough){
+    const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+    const n = rough/pow;
+    let m;
+    if(n<1.5) m=1; else if(n<3) m=2; else if(n<7) m=5; else m=10;
+    return m*pow;
+  }
+
+  const TIME_STEPS = [1,2,5,10,15,30,60,120,240,480,720,1440,2880,5760,10080];
+  function niceTimeStep(rough){
+    for(const s of TIME_STEPS) if(s>=rough) return s;
+    return TIME_STEPS[TIME_STEPS.length-1];
+  }
+  function fmtTime(ms, spanMin){
+    const d = new Date(ms);
+    if(spanMin >= 720){
+      return d.toLocaleDateString(undefined,{month:"short",day:"2-digit"});
+    }
+    return d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",hour12:false});
+  }
+  function fmtDateTime(ms){
+    const d = new Date(ms);
+    return d.toLocaleDateString(undefined,{month:"short",day:"2-digit"}) + "  " +
+           d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",hour12:false});
+  }
+  function fmtPrice(p){ return Number(p).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  let hoverX = null, hoverY = null, isDragging = false, mouseIsDown = false;
+
+  // vertical price-scale state — independent from the horizontal time viewport.
+  // auto:true = fit to visible candles/zones every frame (default, matches TradingView's default).
+  // auto:false = user has manually zoomed the price axis; center/halfRange pins the scale until reset.
+  const priceView = { auto:true, center:0, halfRange:1 };
+  const lastRange = { minP:0, maxP:1, marginTop:8, plotH:100 };
+  let followLive = true;
+
+  function draw(){
+    if(!dataReady) return;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    if(!W || !H) return;
+
+    const marginLeft = 4, marginRight = 86, marginTop = 8, marginBottom = 26;
+    const plotW = W - marginLeft - marginRight;
+    const plotH = H - marginTop - marginBottom;
+    const tfMin = TF_MINUTES[currentTF];
+    const candles = dataByTF[currentTF];
+    if(!candles.length) return;
+
+    const endMs = view.startMs + (plotW/view.pxPerMin)*60000;
+    const visible = candles.filter(c => (c.time + tfMin*60000) >= view.startMs && c.time <= endMs);
+
+    const currentZones = zonesByTF[currentTF];
+    let minP, maxP;
+    if(priceView.auto){
+      let autoMin = Infinity, autoMax = -Infinity;
+      visible.forEach(c => { if(c.low<autoMin) autoMin=c.low; if(c.high>autoMax) autoMax=c.high; });
+      if(Number.isFinite(livePrice)){
+        if(livePrice < autoMin) autoMin = livePrice;
+        if(livePrice > autoMax) autoMax = livePrice;
+      }
+      currentZones.forEach(z=>{
+        if(!zoneTypeVisible(z)) return;
+        if(z.c1Time > endMs || z.endTime < view.startMs) return;
+        if(z.upperPrice>autoMax) autoMax=z.upperPrice;
+        if(z.lowerPrice<autoMin) autoMin=z.lowerPrice;
+      });
+      if(!isFinite(autoMin)){ autoMin = 0; autoMax = 1; }
+      const pad = (autoMax-autoMin)*0.10 || (autoMax*0.02) || 1;
+      minP = autoMin - pad; maxP = autoMax + pad;
+    } else {
+      minP = priceView.center - priceView.halfRange;
+      maxP = priceView.center + priceView.halfRange;
+    }
+    // remember this frame's mapping so the wheel handler can do cursor-centered vertical zoom
+    lastRange.minP = minP; lastRange.maxP = maxP; lastRange.marginTop = marginTop; lastRange.plotH = plotH;
+
+    const priceToY = p => marginTop + (maxP-p)/(maxP-minP)*plotH;
+    const timeToX = t => marginLeft + ((t-view.startMs)/60000)*view.pxPerMin;
+
+    ctx.strokeStyle = "#181D26";
+    ctx.lineWidth = 1;
+    ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+    const priceStep = niceStep((maxP-minP)/6);
+    ctx.fillStyle = "#7A8494";
+    ctx.textBaseline = "middle";
+    for(let p = Math.ceil(minP/priceStep)*priceStep; p<=maxP; p+=priceStep){
+      const y = priceToY(p);
+      ctx.beginPath(); ctx.moveTo(marginLeft,y); ctx.lineTo(marginLeft+plotW,y); ctx.stroke();
+      ctx.fillText(fmtPrice(p), marginLeft+plotW+8, y);
+    }
+
+    const spanMin = plotW/view.pxPerMin;
+    const rough = spanMin/8;
+    const tStep = niceTimeStep(rough);
+    const firstTick = Math.ceil(view.startMs/(tStep*60000))*(tStep*60000);
+    ctx.textBaseline = "top";
+    ctx.textAlign = "center";
+    for(let t=firstTick; t<=endMs; t+=tStep*60000){
+      const x = timeToX(t);
+      if(x<marginLeft || x>marginLeft+plotW) continue;
+      ctx.strokeStyle = "#14181F";
+      ctx.beginPath(); ctx.moveTo(x,marginTop); ctx.lineTo(x,marginTop+plotH); ctx.stroke();
+      ctx.fillStyle = "#7A8494";
+      ctx.fillText(fmtTime(t, spanMin), x, marginTop+plotH+6);
+    }
+    ctx.textAlign = "left";
+
+    currentZones.forEach(z=>{
+      if(!zoneTypeVisible(z)) return;
+      const x1 = timeToX(z.c1Time);
+      const x2raw = timeToX(z.endTime);
+      const x2 = Math.max(x2raw, x1+3);
+      if(x2 < marginLeft || x1 > marginLeft+plotW) return;
+      const cx1 = clamp(x1, marginLeft, marginLeft+plotW);
+      const cx2 = clamp(x2, marginLeft, marginLeft+plotW);
+      const y1 = priceToY(z.upperPrice), y2 = priceToY(z.lowerPrice);
+      const col = zoneColor(z);
+      ctx.fillStyle = hexToRgba(col, zoneAlpha(z));
+      ctx.fillRect(cx1, y1, Math.max(1,cx2-cx1), Math.max(1,y2-y1));
+      ctx.strokeStyle = hexToRgba(col, z.isIFVG ? 0.85 : 0.55);
+      ctx.lineWidth = 1;
+      if(z.isIFVG){ ctx.setLineDash([4,3]); } else { ctx.setLineDash([]); }
+      ctx.strokeRect(cx1+0.5, y1+0.5, Math.max(1,cx2-cx1)-1, Math.max(1,y2-y1)-1);
+      ctx.setLineDash([]);
+
+      if(cx2-cx1 > 34 && y2-y1 > 10){
+        const label = TF_LABEL[currentTF]+" "+(z.isIFVG ? (z.ifvgDirection==="bullish"?"IFVG↑":"IFVG↓") : (z.direction==="bullish"?"FVG↑":"FVG↓"));
+        ctx.fillStyle = hexToRgba(col, 0.9);
+        ctx.font = "9.5px " + getComputedStyle(document.body).fontFamily;
+        ctx.fillText(label, cx1+4, y1+3);
+      }
+    });
+
+    visible.forEach(c=>{
+      const x = timeToX(c.time);
+      const w = Math.max(1, tfMin*view.pxPerMin*0.68);
+      const bull = c.close >= c.open;
+      const col = bull ? COLORS.bull : COLORS.bear;
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      ctx.lineWidth = 1;
+      const cx = x + w/2;
+      ctx.beginPath();
+      ctx.moveTo(cx, priceToY(c.high));
+      ctx.lineTo(cx, priceToY(c.low));
+      ctx.stroke();
+      const yO = priceToY(c.open), yC = priceToY(c.close);
+      const bodyH = Math.max(1, Math.abs(yC-yO));
+      ctx.fillRect(x, Math.min(yO,yC), w, bodyH);
+    });
+
+    if(hoverX!==null && hoverX>=marginLeft && hoverX<=marginLeft+plotW && hoverY>=marginTop && hoverY<=marginTop+plotH){
+      ctx.strokeStyle = "rgba(231,234,240,0.28)";
+      ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(hoverX,marginTop); ctx.lineTo(hoverX,marginTop+plotH); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(marginLeft,hoverY); ctx.lineTo(marginLeft+plotW,hoverY); ctx.stroke();
+      ctx.setLineDash([]);
+
+      const hoverPrice = maxP - ((hoverY-marginTop)/plotH)*(maxP-minP);
+      ctx.fillStyle = "#1E242E";
+      ctx.fillRect(marginLeft+plotW, hoverY-9, marginRight, 18);
+      ctx.fillStyle = "#E7EAF0";
+      ctx.fillText(fmtPrice(hoverPrice), marginLeft+plotW+8, hoverY);
+
+      const hoverTime = view.startMs + ((hoverX-marginLeft)/view.pxPerMin)*60000;
+      ctx.font = "10.5px " + getComputedStyle(document.body).fontFamily;
+      const label = fmtDateTime(hoverTime);
+      const lw = ctx.measureText(label).width;
+      ctx.fillStyle = "#1E242E";
+      ctx.fillRect(hoverX-lw/2-6, marginTop+plotH+2, lw+12, 18);
+      ctx.fillStyle = "#E7EAF0";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, hoverX, marginTop+plotH+11);
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    }
+
+    if(candles.length){
+      const last = candles[candles.length-1];
+      // The candle close is timeframe-specific. The live price is NOT.
+      // Always use the backend's single live trade price for the live marker
+      // and top-right price, regardless of the selected timeframe.
+      const displayPrice = Number.isFinite(livePrice) ? livePrice : last.close;
+      const y = priceToY(displayPrice);
+      const bull = displayPrice >= last.open;
+      ctx.fillStyle = bull ? COLORS.bull : COLORS.bear;
+      ctx.setLineDash([2,3]);
+      ctx.strokeStyle = ctx.fillStyle;
+      ctx.beginPath(); ctx.moveTo(marginLeft,y); ctx.lineTo(marginLeft+plotW,y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillRect(marginLeft+plotW, y-9, marginRight, 18);
+      ctx.fillStyle = "#0A0D12";
+      ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+      ctx.textBaseline = "middle";
+      ctx.fillText(fmtPrice(displayPrice), marginLeft+plotW+8, y);
+      ctx.textBaseline = "alphabetic";
+
+      document.getElementById("lastPriceStat").innerHTML =
+        "BTCUSD &nbsp;"+(bull?"▲":"▼")+" <b style='color:"+(bull?COLORS.bull:COLORS.bear)+"'>"+fmtPrice(displayPrice)+"</b>";
+    }
+
+    updateTooltip(candles, tfMin);
+  }
+
+  function hexToRgba(hex, a){
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return "rgba("+r+","+g+","+b+","+a+")";
+  }
+
+  function updateTooltip(candles, tfMin){
+    // Candle detail box now only appears while the mouse button is held down
+    // over the chart (not the price axis), and disappears immediately on release.
+    if(hoverX===null || !mouseIsDown || dragOnAxis){ tooltip.style.display="none"; return; }
+    const hoverTime = view.startMs + ((hoverX-4)/view.pxPerMin)*60000;
+    let nearest = null, bestDist = Infinity;
+    for(const c of candles){
+      const d = Math.abs((c.time + tfMin*30000) - hoverTime);
+      if(d < bestDist){ bestDist = d; nearest = c; }
+    }
+    if(!nearest || bestDist > tfMin*60000*1.4){ tooltip.style.display="none"; return; }
+    const bull = nearest.close >= nearest.open;
+    tooltip.innerHTML =
+      '<div class="row"><span>time</span><span>'+fmtDateTime(nearest.time)+'</span></div>'+
+      '<div class="row"><span>open</span><span>'+fmtPrice(nearest.open)+'</span></div>'+
+      '<div class="row"><span>high</span><span>'+fmtPrice(nearest.high)+'</span></div>'+
+      '<div class="row"><span>low</span><span>'+fmtPrice(nearest.low)+'</span></div>'+
+      '<div class="row"><span>close</span><span style="color:'+(bull?COLORS.bull:COLORS.bear)+'">'+fmtPrice(nearest.close)+'</span></div>';
+    tooltip.style.display = "block";
+    let left = hoverX + 16, top = hoverY - 10;
+    if(left + 160 > chartWrap.clientWidth) left = hoverX - 176;
+    tooltip.style.left = left+"px";
+    tooltip.style.top = Math.max(4,top)+"px";
+  }
+
+  /* ---------- interaction: zoom / pan ----------
+     TradingView convention:
+       - wheel over the PRICE AXIS (right strip)  -> vertical zoom only, cursor-price-centered
+       - wheel over the CHART, or Ctrl+wheel anywhere -> horizontal (time) zoom, cursor-time-centered
+  */
+  const PRICE_AXIS_WIDTH = 86; // keep in sync with marginRight in draw()
+
+  canvas.addEventListener("wheel", (e)=>{
+    e.preventDefault();
+    if(!dataReady) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const onPriceAxis = mouseX > rect.width - PRICE_AXIS_WIDTH;
+    const zoomFactor = e.deltaY < 0 ? 1.14 : 1/1.14;
+
+    if(onPriceAxis && !e.ctrlKey){
+      // ---- vertical-only zoom, centered on the price under the cursor
+      const priceAtCursor = lastRange.maxP - ((mouseY-lastRange.marginTop)/lastRange.plotH)*(lastRange.maxP-lastRange.minP);
+      const curHalf = (lastRange.maxP-lastRange.minP)/2 || 1;
+      const relY = clamp((mouseY-lastRange.marginTop)/lastRange.plotH, -0.5, 1.5);
+      let newHalf = clamp(curHalf/zoomFactor, curHalf*0.015, curHalf*40);
+      const newMax = priceAtCursor + relY*newHalf*2;
+      priceView.center = newMax - newHalf;
+      priceView.halfRange = newHalf;
+      priceView.auto = false;
+    } else {
+      // ---- horizontal zoom, centered on the time under the cursor (also used when Ctrl is held over the axis)
+      const mouseTime = view.startMs + (mouseX/view.pxPerMin)*60000;
+      view.pxPerMin = clamp(view.pxPerMin*zoomFactor, 0.006, 60);
+      view.startMs = mouseTime - (mouseX/view.pxPerMin)*60000;
+      followLive = false;
+      updateGoLiveButton();
+    }
+    draw();
+  }, { passive:false });
+
+  let dragStartX=0, dragStartMs=0, dragStartY=0, dragStartCenter=0, dragStartHalf=1, dragOnAxis=false;
+  canvas.addEventListener("mousedown",(e)=>{
+    if(!dataReady) return;
+    if(e.button !== 0) return; // ignore right/middle click here — right click opens the context menu instead
+    mouseIsDown = true;
+    const rect = canvas.getBoundingClientRect();
+    dragOnAxis = (e.clientX - rect.left) > rect.width - PRICE_AXIS_WIDTH;
+    isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; dragStartMs = view.startMs;
+    if(dragOnAxis && priceView.auto){
+      // lock in the current auto-fit range as the manual starting point so the drag has something to move
+      priceView.center = (lastRange.minP+lastRange.maxP)/2;
+      priceView.halfRange = (lastRange.maxP-lastRange.minP)/2 || 1;
+      priceView.auto = false;
+    }
+    dragStartCenter = priceView.center;
+    dragStartHalf = priceView.halfRange;
+    canvas.style.cursor = dragOnAxis ? "ns-resize" : "grabbing";
+  });
+  window.addEventListener("mousemove",(e)=>{
+    const rect = canvas.getBoundingClientRect();
+    hoverX = e.clientX - rect.left; hoverY = e.clientY - rect.top;
+    if(isDragging){
+      const pricePerPixel = (dragStartHalf*2) / (lastRange.plotH || 1);
+      if(dragOnAxis){
+        // vertical-only pan of the price scale
+        const dy = e.clientY - dragStartY;
+        priceView.center = dragStartCenter + dy*pricePerPixel;
+      } else {
+        const dx = e.clientX - dragStartX;
+        view.startMs = dragStartMs - (dx/view.pxPerMin)*60000;
+        if(!priceView.auto){
+          // price scale was already manually zoomed — let the same drag reveal the parts above/below too
+          const dy = e.clientY - dragStartY;
+          priceView.center = dragStartCenter + dy*pricePerPixel;
+        }
+        followLive = false; // manual pan takes the user out of live-follow mode, same as TradingView
+        updateGoLiveButton();
+      }
+    } else {
+      canvas.style.cursor = (hoverX > rect.width - PRICE_AXIS_WIDTH) ? "ns-resize" : "crosshair";
+    }
+    if(hoverX<0||hoverX>rect.width||hoverY<0||hoverY>rect.height){ hoverX=null; hoverY=null; }
+    if(dataReady) draw();
+  });
+  window.addEventListener("mouseup",()=>{ isDragging=false; mouseIsDown=false; canvas.style.cursor="crosshair"; if(dataReady) draw(); });
+  canvas.addEventListener("mouseleave",()=>{ if(!isDragging){ hoverX=null; hoverY=null; if(dataReady) draw(); } });
+
+  canvas.addEventListener("dblclick",(e)=>{
+    if(!dataReady) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    if(mouseX > rect.width - PRICE_AXIS_WIDTH){
+      priceView.auto = true; // reset vertical scale only
+    } else {
+      goLive(); // reset horizontal viewport to the latest candles
+      updateGoLiveButton();
+    }
+    draw();
+  });
+
+  // ---- right-click context menu ----
+  const ctxMenu = document.getElementById("ctxMenu");
+  canvas.addEventListener("contextmenu", (e)=>{
+    e.preventDefault();
+    if(!dataReady) return;
+    ctxMenu.style.left = e.clientX+"px";
+    ctxMenu.style.top = e.clientY+"px";
+    ctxMenu.style.display = "block";
+  });
+  document.addEventListener("click", (e)=>{
+    if(e.target.id !== "ctxReset") ctxMenu.style.display = "none";
+  });
+  document.getElementById("ctxReset").addEventListener("click", ()=>{
+    resetChart();
+    ctxMenu.style.display = "none";
+  });
+
+  let touchState = null;
+  canvas.addEventListener("touchstart",(e)=>{
+    if(!dataReady) return;
+    if(e.touches.length===1){
+      touchState = { mode:"pan", x:e.touches[0].clientX, startMs:view.startMs };
+    } else if(e.touches.length===2){
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchState = { mode:"pinch", dist:Math.hypot(dx,dy), pxPerMin:view.pxPerMin, startMs:view.startMs,
+        midTime: view.startMs + (((e.touches[0].clientX+e.touches[1].clientX)/2 - canvas.getBoundingClientRect().left)/view.pxPerMin)*60000 };
+    }
+  }, {passive:true});
+  canvas.addEventListener("touchmove",(e)=>{
+    if(!touchState) return;
+    e.preventDefault();
+    followLive = false;
+    updateGoLiveButton();
+    if(touchState.mode==="pan" && e.touches.length===1){
+      const dx = e.touches[0].clientX - touchState.x;
+      view.startMs = touchState.startMs - (dx/view.pxPerMin)*60000;
+      draw();
+    } else if(touchState.mode==="pinch" && e.touches.length===2){
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx,dy);
+      const factor = dist/touchState.dist;
+      view.pxPerMin = clamp(touchState.pxPerMin*factor, 0.006, 60);
+      const rect = canvas.getBoundingClientRect();
+      const midX = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
+      view.startMs = touchState.midTime - (midX/view.pxPerMin)*60000;
+      draw();
+    }
+  }, {passive:false});
+  canvas.addEventListener("touchend",()=>{ touchState = null; });
+
+  /* =========================================================
+     5. UI WIRING — tabs, checkboxes, selects, ledger
+  ========================================================= */
+  const tfTabsEl = document.getElementById("tfTabs");
+  TF_ORDER.forEach(tf=>{
+    const btn = document.createElement("button");
+    btn.className = "tf-tab" + (tf===currentTF?" active":"");
+    btn.textContent = TF_LABEL[tf];
+    btn.addEventListener("click", ()=>{
+      currentTF = tf;
+      [...tfTabsEl.children].forEach(b=>b.classList.remove("active"));
+      btn.classList.add("active");
+      if(dataReady){ followLive = true; view = fitInitialView(tf); priceView.auto = true; renderLedger(); draw(); updateGoLiveButton(); }
+    });
+    tfTabsEl.appendChild(btn);
+  });
+
+  const goLiveBtn = document.getElementById("goLiveBtn");
+  function updateGoLiveButton(){
+    if(followLive){
+      goLiveBtn.textContent = "● Live";
+      goLiveBtn.className = "live-btn on-live";
+    } else {
+      goLiveBtn.textContent = "○ Go Live";
+      goLiveBtn.className = "live-btn off-live";
+    }
+  }
+  goLiveBtn.addEventListener("click", ()=>{
+    goLive();
+    draw();
+    updateGoLiveButton();
+  });
+
+  document.querySelectorAll('[data-type]').forEach(cb=>{
+    cb.addEventListener("change",()=>{
+      typeEnabledCfg[cb.dataset.type] = cb.checked;
+      if(dataReady){ draw(); renderLedger(); }
+    });
+  });
+
+  document.getElementById("fillRule").addEventListener("change",(e)=>{
+    opts.fillRule = e.target.value;
+    if(dataReady){ draw(); renderLedger(); }
+  });
+  document.getElementById("invRule").addEventListener("change",(e)=>{
+    opts.invRule = e.target.value;
+    if(dataReady){ draw(); renderLedger(); }
+  });
+
+  const ledgerEl = document.getElementById("ledger");
+  const ledgerTitleEl = document.getElementById("ledgerTitle");
+  function statusBadge(z){
+    if(z.status==="MITIGATED") return "mitigated";
+    if(z.isIFVG) return "ifvg";
+    if(z.status==="FILLED") return "filled";
+    if(z.status==="PARTIALLY_FILLED") return "partial";
+    return "active";
+  }
+  function renderLedger(){
+    ledgerTitleEl.textContent = "Zones — " + TF_LABEL[currentTF];
+    const zones = zonesByTF[currentTF].filter(zoneTypeVisible).slice().sort((a,b)=>b.creationTime-a.creationTime).slice(0,80);
+    ledgerEl.innerHTML = "";
+    if(zones.length===0){
+      ledgerEl.innerHTML = '<div class="ledger-empty">No zones match the current filters.</div>';
+      return;
+    }
+    zones.forEach(z=>{
+      const dirClass = z.isIFVG ? ("ifvg-"+z.ifvgDirection) : z.direction;
+      const dirLabel = z.isIFVG
+        ? (z.ifvgDirection==="bullish" ? "BULLISH IFVG" : "BEARISH IFVG")
+        : (z.direction==="bullish" ? "BULLISH FVG" : "BEARISH FVG");
+      const item = document.createElement("div");
+      item.className = "zone-item";
+      item.innerHTML =
+        '<div class="zone-top"><span class="zone-dir '+dirClass+'">'+dirLabel+'</span>'+
+        '<span class="zone-badge">'+statusBadge(z)+'</span></div>'+
+        '<div class="zone-range">'+fmtPrice(z.lowerPrice)+' — '+fmtPrice(z.upperPrice)+'  <span style="color:#4B5563">Δ'+fmtPrice(z.gapSize)+'</span></div>'+
+        '<div class="zone-time">'+fmtDateTime(z.creationTime)+'</div>';
+      item.addEventListener("click", ()=>{
+        const tfMin = TF_MINUTES[currentTF];
+        const span = 40*tfMin;
+        view.pxPerMin = clamp((chartWrap.clientWidth-78)/span, 0.006, 60);
+        view.startMs = z.c1Time - span*60000*0.35;
+        draw();
+      });
+      ledgerEl.appendChild(item);
+    });
+  }
+
+  /* =========================================================
+     6. BOOT
+  ========================================================= */
+  resizeCanvas();
+  loadAll();
+
+})();
+</script>
+</body>
+</html>

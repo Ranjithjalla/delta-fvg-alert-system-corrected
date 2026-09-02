@@ -1,0 +1,22 @@
+{
+  "name": "delta-fvg-alert-system",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Server-side 24/7 Delta Exchange BTCUSD FVG/IFVG alert engine with Telegram and Web Push.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "generate-vapid": "node generateVapidKeys.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "node-fetch": "^2.7.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.3"
+  }
+}
