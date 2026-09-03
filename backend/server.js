@@ -920,115 +920,73 @@ app.get(
 //
 // =====================================================
 
-app.get(
-  '/api/test-alert',
-  async (req, res) => {
+// =====================================================
+// TEMPORARY ALERT TEST ENDPOINT
+// =====================================================
 
-    const key =
-      req.query.key;
+app.get('/api/test-alert', async (req, res) => {
+  const key = String(req.query.key || '');
 
+  const configuredKey = String(
+    process.env.TEST_ALERT_KEY || ''
+  );
 
-    // IMPORTANT FIX:
-    //
-    // WRONG:
-    // key !== process.env.FVG_TEST_927461
-    //
-    // CORRECT:
-    // key !== process.env.TEST_ALERT_KEY
+  // TEMPORARY DEBUG INFORMATION
+  console.log('[TEST ALERT] key received:', key.length);
+  console.log('[TEST ALERT] environment key exists:', !!configuredKey);
+  console.log('[TEST ALERT] environment key length:', configuredKey.length);
 
-    if (
-      !process.env.TEST_ALERT_KEY ||
-      key !== process.env.TEST_ALERT_KEY
-    ) {
-
-      return res
-        .status(403)
-        .json({
-          error: 'forbidden'
-        });
-    }
-
-
-    // -------------------------------------------------
-    // Synthetic test FVG
-    // -------------------------------------------------
-
-    const testZone = {
-
-      id:
-        `TEST-${Date.now()}`,
-
-      symbol:
-        SYMBOL,
-
-      timeframe:
-        '5m',
-
-      direction:
-        'bullish',
-
-      ifvgDirection:
-        null,
-
-      isIFVG:
-        false,
-
-      lowerPrice:
-        76000,
-
-      upperPrice:
-        76100,
-
-      creationTime:
-        Date.now()
-    };
-
-
-    try {
-
-      const result =
-        await alertService.sendAlert(
-          testZone,
-          'FVG_RETRACE',
-          log
-        );
-
-
-      res.json({
-
-        ok: true,
-
-        test: true,
-
-        result
-      });
-
-    }
-
-    catch (err) {
-
-      console.error(
-        '[TEST ALERT] failed:',
-        err
-      );
-
-
-      res
-        .status(500)
-        .json({
-
-          ok: false,
-
-          test: true,
-
-          error:
-            err.message
-        });
-    }
+  if (!configuredKey) {
+    return res.status(500).json({
+      ok: false,
+      error: 'TEST_ALERT_KEY is not configured in the server environment'
+    });
   }
-);
 
+  if (key !== configuredKey) {
+    return res.status(403).json({
+      ok: false,
+      error: 'forbidden',
+      receivedKeyLength: key.length,
+      configuredKeyLength: configuredKey.length
+    });
+  }
 
+  const testZone = {
+    id: `TEST-${Date.now()}`,
+    symbol: SYMBOL,
+    timeframe: '5m',
+    direction: 'bullish',
+    ifvgDirection: null,
+    isIFVG: false,
+    lowerPrice: 76000,
+    upperPrice: 76100,
+    creationTime: Date.now()
+  };
+
+  try {
+    const result = await alertService.sendAlert(
+      testZone,
+      'FVG_RETRACE',
+      log
+    );
+
+    res.json({
+      ok: true,
+      test: true,
+      result
+    });
+
+  } catch (err) {
+    console.error('[TEST ALERT] failed:', err);
+
+    res.status(500).json({
+      ok: false,
+      test: true,
+      error: err.message
+    });
+  }
+});
 // =====================================================
 // API: VAPID PUBLIC KEY
 // =====================================================
