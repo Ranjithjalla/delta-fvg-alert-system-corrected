@@ -156,6 +156,62 @@ app.get('/api/health', (req,res) => {
   const healthy = state.initialized && feed.wsConnected && TF_ORDER.every(tf => feed.buffers[tf].length > 0);
   res.status(healthy?200:503).json({ ok:healthy, websocket:feed.wsConnected, initialized:state.initialized, timeframes:Object.fromEntries(TF_ORDER.map(tf=>[tf,{candles:feed.buffers[tf].length,lastCandle:feed.lastCandleTime[tf]}])) });
 });
+
+
+
+
+// TEMPORARY ALERT TEST ENDPOINT
+app.get('/api/test-alert', async (req, res) => {
+  const key = req.query.key;
+
+  // Protect the endpoint with a secret environment variable
+  if (!process.env.TEST_ALERT_KEY || key !== process.env.FVG_TEST_927461) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
+  const testZone = {
+    id: `TEST-${Date.now()}`,
+    symbol: SYMBOL,
+    timeframe: '5m',
+    direction: 'bullish',
+    ifvgDirection: null,
+    isIFVG: false,
+
+    // Fake FVG zone for testing only
+    lowerPrice: 76000,
+    upperPrice: 76100,
+
+    creationTime: Date.now()
+  };
+
+  try {
+    const result = await alertService.sendAlert(
+      testZone,
+      'FVG_RETRACE',
+      log
+    );
+
+    res.json({
+      ok: true,
+      test: true,
+      result
+    });
+
+  } catch (err) {
+    console.error('[TEST ALERT] failed:', err);
+
+    res.status(500).json({
+      ok: false,
+      test: true,
+      error: err.message
+    });
+  }
+});
+
+
+
+
+
 app.get('/api/vapid-public-key', (req,res) => res.json({ key:process.env.VAPID_PUBLIC_KEY || null }));
 app.post('/api/subscribe', (req,res) => {
   const { userId, subscription } = req.body || {};
