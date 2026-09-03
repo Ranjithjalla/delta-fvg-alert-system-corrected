@@ -10,6 +10,9 @@
     "generate-vapid": "node generateVapidKeys.js",
     "test": "node --test"
   },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
