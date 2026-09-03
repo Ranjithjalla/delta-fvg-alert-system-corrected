@@ -543,79 +543,7 @@ async function processPrice(price) {
   }
 }
 
-app.get('/api/test-fvg-touch', async (req, res) => {
-  const key = String(req.query.key || '');
-  const configuredKey = String(process.env.TEST_ALERT_KEY || '');
 
-  if (!configuredKey || key !== configuredKey) {
-    return res.status(403).json({
-      ok: false,
-      error: 'forbidden'
-    });
-  }
-
-  if (!state.liveProcessingEnabled) {
-    return res.status(503).json({
-      ok: false,
-      error: 'live processing is not enabled yet'
-    });
-  }
-
-  const testZone = {
-    id: `TEST-FVG-${Date.now()}`,
-    symbol: SYMBOL,
-    timeframe: '5m',
-    direction: 'bullish',
-    c1Time: Date.now() - 900000,
-    c2Time: Date.now() - 600000,
-    c3Time: Date.now() - 300000,
-    creationTime: Date.now(),
-    lowerPrice: 76000,
-    upperPrice: 76100,
-    gapSize: 100,
-    status: 'ACTIVE',
-    isIFVG: false,
-    ifvgDirection: null
-  };
-
-  try {
-    state.zones['5m'].set(testZone.id, testZone);
-
-    persistZone(testZone);
-
-    console.log(
-      `[TEST FVG] Created bullish FVG: ${testZone.lowerPrice} - ${testZone.upperPrice}`
-    );
-
-    const testPrice = 76050;
-
-    console.log(`[TEST FVG] Simulating live price: ${testPrice}`);
-
-    await processPrice(testPrice);
-
-    res.json({
-      ok: true,
-      test: true,
-      zone: {
-        id: testZone.id,
-        timeframe: testZone.timeframe,
-        direction: testZone.direction,
-        lowerPrice: testZone.lowerPrice,
-        upperPrice: testZone.upperPrice
-      },
-      simulatedPrice: testPrice,
-      message: 'Real processPrice() was executed against the synthetic FVG.'
-    });
-  } catch (err) {
-    console.error('[TEST FVG] failed:', err);
-
-    res.status(500).json({
-      ok: false,
-      test: true,
-      error: err.message
-    });
-  }
-});
 
 // =====================================================
 // DELTA FEED
@@ -997,69 +925,7 @@ app.get(
 // TEMPORARY ALERT TEST ENDPOINT
 // =====================================================
 
-app.get('/api/test-alert', async (req, res) => {
-  const key = String(req.query.key || '');
 
-  const configuredKey = String(
-    process.env.TEST_ALERT_KEY || ''
-  );
-
-  // TEMPORARY DEBUG INFORMATION
-  console.log('[TEST ALERT] key received:', key.length);
-  console.log('[TEST ALERT] environment key exists:', !!configuredKey);
-  console.log('[TEST ALERT] environment key length:', configuredKey.length);
-
-  if (!configuredKey) {
-    return res.status(500).json({
-      ok: false,
-      error: 'TEST_ALERT_KEY is not configured in the server environment'
-    });
-  }
-
-  if (key !== configuredKey) {
-    return res.status(403).json({
-      ok: false,
-      error: 'forbidden',
-      receivedKeyLength: key.length,
-      configuredKeyLength: configuredKey.length
-    });
-  }
-
-  const testZone = {
-    id: `TEST-${Date.now()}`,
-    symbol: SYMBOL,
-    timeframe: '5m',
-    direction: 'bullish',
-    ifvgDirection: null,
-    isIFVG: false,
-    lowerPrice: 76000,
-    upperPrice: 76100,
-    creationTime: Date.now()
-  };
-
-  try {
-    const result = await alertService.sendAlert(
-      testZone,
-      'FVG_RETRACE',
-      log
-    );
-
-    res.json({
-      ok: true,
-      test: true,
-      result
-    });
-
-  } catch (err) {
-    console.error('[TEST ALERT] failed:', err);
-
-    res.status(500).json({
-      ok: false,
-      test: true,
-      error: err.message
-    });
-  }
-});
 // =====================================================
 // API: VAPID PUBLIC KEY
 // =====================================================
