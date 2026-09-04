@@ -309,7 +309,7 @@
   async function loadAll(){
     try{
       const results = await Promise.all(TF_ORDER.map(tf => fetchHistory(tf)));
-      TF_ORDER.forEach((tf,i) => { dataByTF[tf] = results[i]; });
+      TF_ORDER.forEach((tf,i) => { dataByTF[tf] = normalizeCandles(tf, results[i]); });
       dataReady = true;
       document.getElementById("loadingMsg").style.display = "none";
       const zoneResults = await Promise.all(TF_ORDER.map(tf => fetch(BACKEND_URL+"/api/zones?tf="+tf).then(r=>r.json())));
@@ -338,6 +338,51 @@
 
   let socket = null, reconnectTimer = null;
   let livePrice = null, livePriceAt = 0;
+  const candleResyncing = { "5m":false, "15m":false, "1h":false, "4h":false };
+
+  function normalizeCandles(tf, candles){
+    const interval = TF_MINUTES[tf] * 60000;
+    const sorted = (Array.isArray(candles) ? candles : [])
+      .filter(c => c && Number.isFinite(Number(c.time)) &&
+        Number.isFinite(Number(c.open)) && Number.isFinite(Number(c.high)) &&
+        Number.isFinite(Number(c.low)) && Number.isFinite(Number(c.close)))
+      .map(c => ({...c, time:Number(c.time), open:Number(c.open), high:Number(c.high), low:Number(c.low), close:Number(c.close)}))
+      .sort((a,b)=>a.time-b.time);
+    const unique=[];
+    for(const c of sorted){
+      const last=unique[unique.length-1];
+      if(!last || last.time!==c.time) unique.push(c);
+      else unique[unique.length-1]=c;
+    }
+    return unique.slice(-REST_LIMIT);
+  }
+
+  function candleGapCount(tf, candles){
+    const arr = normalizeCandles(tf, candles);
+    const interval = TF_MINUTES[tf] * 60000;
+    let gaps = 0;
+    for(let i=1;i<arr.length;i++){
+      const delta = arr[i].time - arr[i-1].time;
+      if(delta > interval) gaps += Math.floor(delta/interval)-1;
+    }
+    return gaps;
+  }
+
+  async function repairCandleSeries(tf){
+    if(candleResyncing[tf]) return;
+    candleResyncing[tf]=true;
+    try{
+      const fresh = normalizeCandles(tf, await fetchHistory(tf));
+      if(fresh.length) dataByTF[tf]=fresh;
+      if(tf===currentTF && followLive) snapToLive();
+      requestDraw();
+    } catch(e){
+      // Keep the current stream alive; the backend watchdog/resync remains authoritative.
+    } finally {
+      candleResyncing[tf]=false;
+    }
+  }
+
   function connectSocket(){
     const wsUrl = BACKEND_URL.replace(/^http/i, "ws") + "/ws";
     socket = new WebSocket(wsUrl);
@@ -362,10 +407,15 @@
       if(msg.type === "candles") {
         const tf = msg.tf;
         if(!dataByTF[tf]) return;
-        dataByTF[tf] = msg.candles || [];
+        dataByTF[tf] = normalizeCandles(tf, msg.candles);
         if(tf === currentTF && followLive) snapToLive();
         requestDraw();
         updateGoLiveButton();
+
+        // Never leave a visible timestamp gap on the chart. If a reconnect or
+        // stream hiccup temporarily produces a gap, refresh only that timeframe
+        // from our backend instead of drawing an incomplete series.
+        if(candleGapCount(tf, dataByTF[tf]) > 0) repairCandleSeries(tf);
         return;
       }
 
@@ -804,7 +854,28 @@
     let minP, maxP;
     if(priceView.auto){
       let autoMin = Infinity, autoMax = -Infinity;
-      visible.forEach(c => { if(c.low<autoMin) autoMin=c.low; if(c.high>autoMax) autoMax=c.high; });
+
+      // Use the normal candle range for the scale, but prevent one exceptional
+      // flash-move candle from flattening every other candle into 1-pixel lines.
+      // The OHLC values are NEVER changed; only the automatic viewport is made
+      // robust. Extreme candles are still drawn and may extend beyond the plot.
+      const ranges = visible.map(c => Math.max(0, c.high-c.low)).filter(Number.isFinite).sort((a,b)=>a-b);
+      const medianRange = ranges.length ? ranges[Math.floor(ranges.length/2)] : 0;
+      const robustThreshold = medianRange > 0 ? medianRange * 8 : Infinity;
+      visible.forEach(c => {
+        const range = Math.max(0, c.high-c.low);
+        if(range > robustThreshold) {
+          // Keep the candle body/close represented, but don't let its extreme
+          // wick define the entire automatic vertical scale.
+          const coreHigh = Math.max(c.open,c.close);
+          const coreLow = Math.min(c.open,c.close);
+          if(coreLow < autoMin) autoMin=coreLow;
+          if(coreHigh > autoMax) autoMax=coreHigh;
+        } else {
+          if(c.low<autoMin) autoMin=c.low;
+          if(c.high>autoMax) autoMax=c.high;
+        }
+      });
       if(Number.isFinite(livePrice)){
         if(livePrice < autoMin) autoMin = livePrice;
         if(livePrice > autoMax) autoMax = livePrice;
