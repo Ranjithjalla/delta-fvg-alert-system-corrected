@@ -1185,10 +1185,7 @@
       const onPriceAxis = x > rect.width - PRICE_AXIS_WIDTH;
 
       if(onPriceAxis){
-        // Mobile: drag the price axis vertically to zoom the price scale,
-        // matching the familiar exchange-chart interaction.
-        // Drag up  -> zoom in (smaller price range)
-        // Drag down -> zoom out (larger price range)
+        // Mobile: one-finger vertical drag on the price axis pans the entire price scale.
         let startMin = lastRange.minP;
         let startMax = lastRange.maxP;
         if(priceView.auto){
@@ -1198,18 +1195,25 @@
         }
         const startHalf = priceView.halfRange || ((startMax-startMin)/2) || 1;
         const startCenter = priceView.center;
-        const priceAtTouch = startMax - ((y-lastRange.marginTop)/(lastRange.plotH||1))*(startMax-startMin);
-
-        touchState = {
-          mode:"priceZoom",
-          y:t.clientY,
-          startHalf,
-          startCenter,
-          anchorPrice: Number.isFinite(priceAtTouch) ? priceAtTouch : startCenter
-        };
+        touchState = { mode:"pricePan", y:t.clientY, startHalf, startCenter, plotH:lastRange.plotH || 1 };
       } else {
-        // Existing one-finger horizontal chart pan.
-        touchState = { mode:"pan", x:t.clientX, startMs:view.startMs };
+        // One-finger chart pan: horizontal moves the time axis, vertical moves the price axis.
+        let startMin = lastRange.minP;
+        let startMax = lastRange.maxP;
+        if(priceView.auto){
+          priceView.center = (startMin + startMax) / 2;
+          priceView.halfRange = (startMax - startMin) / 2 || 1;
+          priceView.auto = false;
+        }
+        touchState = {
+          mode:"pan",
+          x:t.clientX,
+          y:t.clientY,
+          startMs:view.startMs,
+          startCenter:priceView.center,
+          startHalf:priceView.halfRange || ((startMax-startMin)/2) || 1,
+          plotH:lastRange.plotH || 1
+        };
       }
     } else if(e.touches.length===2){
       const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -1223,17 +1227,11 @@
     if(!touchState) return;
     e.preventDefault();
 
-    if(touchState.mode==="priceZoom" && e.touches.length===1){
+    if(touchState.mode==="pricePan" && e.touches.length===1){
       const dy = e.touches[0].clientY - touchState.y;
-
-      // Exponential scaling gives a smooth Delta-like feel:
-      // upward drag => smaller halfRange => zoom in
-      // downward drag => larger halfRange => zoom out
-      const factor = Math.exp(dy * 0.008);
-      const newHalf = clamp(touchState.startHalf * factor, 1e-6, touchState.startHalf * 40);
-
-      priceView.halfRange = newHalf;
-      priceView.center = touchState.anchorPrice;
+      const pricePerPixel = (touchState.startHalf * 2) / (touchState.plotH || 1);
+      priceView.center = touchState.startCenter + dy * pricePerPixel;
+      priceView.halfRange = touchState.startHalf;
       priceView.auto = false;
       followLive = false;
       updateGoLiveButton();
@@ -1242,7 +1240,15 @@
       followLive = false;
       updateGoLiveButton();
       const dx = e.touches[0].clientX - touchState.x;
+      const dy = e.touches[0].clientY - touchState.y;
       view.startMs = touchState.startMs - (dx/view.pxPerMin)*60000;
+
+      // Vertical drag shifts the visible price range up/down.
+      // Drag up -> candles/price view moves up; drag down -> moves down.
+      const pricePerPixel = (touchState.startHalf * 2) / (touchState.plotH || 1);
+      priceView.center = touchState.startCenter + dy * pricePerPixel;
+      priceView.halfRange = touchState.startHalf;
+      priceView.auto = false;
       draw();
     } else if(touchState.mode==="pinch" && e.touches.length===2){
       followLive = false;
