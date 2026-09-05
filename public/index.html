@@ -1173,40 +1173,95 @@
     ctxMenu.style.display = "none";
   });
 
+  // Mobile touch behavior: the right-side price axis controls vertical zoom;
+  // the chart area controls horizontal time pan; two-finger pinch controls time zoom.
   let touchState = null;
   canvas.addEventListener("touchstart",(e)=>{
     if(!dataReady) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
     if(e.touches.length===1){
-      touchState = { mode:"pan", x:e.touches[0].clientX, startMs:view.startMs };
+      const t = e.touches[0];
+      const x = t.clientX - rect.left;
+      const y = t.clientY - rect.top;
+      const onPriceAxis = x > rect.width - PRICE_AXIS_WIDTH;
+      touchState = onPriceAxis
+        ? {
+            mode:"priceZoom",
+            x:t.clientX,
+            y:t.clientY,
+            startHalf:priceView.auto ? ((lastRange.maxP-lastRange.minP)/2 || 1) : priceView.halfRange,
+            startCenter:priceView.auto ? ((lastRange.maxP+lastRange.minP)/2) : priceView.center
+          }
+        : { mode:"pan", x:t.clientX, startMs:view.startMs };
     } else if(e.touches.length===2){
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
-      touchState = { mode:"pinch", dist:Math.hypot(dx,dy), pxPerMin:view.pxPerMin, startMs:view.startMs,
-        midTime: view.startMs + (((e.touches[0].clientX+e.touches[1].clientX)/2 - canvas.getBoundingClientRect().left)/view.pxPerMin)*60000 };
+      const midX = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
+      touchState = {
+        mode:"pinch",
+        dist:Math.hypot(dx,dy),
+        pxPerMin:view.pxPerMin,
+        midTime:view.startMs + (midX/view.pxPerMin)*60000
+      };
     }
-  }, {passive:true});
+  }, {passive:false});
+
   canvas.addEventListener("touchmove",(e)=>{
     if(!touchState) return;
     e.preventDefault();
-    followLive = false;
-    updateGoLiveButton();
-    if(touchState.mode==="pan" && e.touches.length===1){
+    const rect = canvas.getBoundingClientRect();
+
+    if(touchState.mode==="priceZoom" && e.touches.length===1){
+      // On the PRICE BAR only:
+      // swipe up = zoom in (narrower price range)
+      // swipe down = zoom out (wider price range)
+      const dy = e.touches[0].clientY - touchState.y;
+      const zoomFactor = Math.exp(dy * 0.006);
+      const newHalf = clamp(touchState.startHalf * zoomFactor, 0.5, 1000000);
+
+      // Keep the price under the finger as the zoom anchor.
+      const axisY = e.touches[0].clientY - rect.top;
+      const baseMin = lastRange.minP, baseMax = lastRange.maxP;
+      const priceAtTouch = baseMax -
+        ((axisY-lastRange.marginTop)/(lastRange.plotH || 1))*(baseMax-baseMin);
+
+      const anchorRatio = clamp(
+        (axisY-lastRange.marginTop)/(lastRange.plotH || 1), 0, 1
+      );
+      priceView.halfRange = newHalf;
+      priceView.center = priceAtTouch + (anchorRatio-0.5)*(newHalf*2);
+      priceView.auto = false;
+      followLive = false;
+      updateGoLiveButton();
+      draw();
+
+    } else if(touchState.mode==="pan" && e.touches.length===1){
+      // On the chart: one-finger horizontal movement pans TIME only.
       const dx = e.touches[0].clientX - touchState.x;
       view.startMs = touchState.startMs - (dx/view.pxPerMin)*60000;
+      followLive = false;
+      updateGoLiveButton();
       draw();
+
     } else if(touchState.mode==="pinch" && e.touches.length===2){
+      // Two fingers on the chart = horizontal/time zoom.
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx,dy);
       const factor = dist/touchState.dist;
       view.pxPerMin = clamp(touchState.pxPerMin*factor, 0.006, 60);
-      const rect = canvas.getBoundingClientRect();
       const midX = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
       view.startMs = touchState.midTime - (midX/view.pxPerMin)*60000;
+      followLive = false;
+      updateGoLiveButton();
       draw();
     }
   }, {passive:false});
-  canvas.addEventListener("touchend",()=>{ touchState = null; });
+
+  canvas.addEventListener("touchend",(e)=>{
+    if(e.touches.length===0) touchState = null;
+  });
 
   /* =========================================================
      5. UI WIRING — tabs, checkboxes, selects, ledger
