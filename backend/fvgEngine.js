@@ -8,6 +8,17 @@ const TF_MINUTES = {
 const WICK_MIN_PCT = 0.05;
 const C2_BODY_MIN_PCT = 0.60;
 
+/*
+ * Minimum imbalance size, in raw price points (BTCUSD price units),
+ * between C1's relevant wick and C3's relevant wick.
+ *
+ * A gap smaller than this is treated as noise and is never returned
+ * as a zone by fvgFromThree(). This is the SAME authoritative check
+ * used by the live engine and any backtest built on top of it, so
+ * the two can never disagree about which zones are valid.
+ */
+const MIN_GAP_POINTS = 200;
+
 function body(c) {
   return Math.abs(c.close - c.open);
 }
@@ -108,7 +119,7 @@ function zoneId(symbol, tf, c1, direction) {
  *
  * FVG boundaries use the WICKS of C1 and C3.
  */
-function fvgFromThree(c1, c2, c3, symbol, tf) {
+function fvgFromThree(c1, c2, c3, symbol, tf, minGapPoints = MIN_GAP_POINTS) {
   // All three must be same-color, non-doji candles.
   if (!sameColor3(c1, c2, c3)) {
     return null;
@@ -170,6 +181,17 @@ function fvgFromThree(c1, c2, c3, symbol, tf) {
     return null;
   }
 
+  const gapSize = upperPrice - lowerPrice;
+
+  // Minimum imbalance size: discard gaps smaller than minGapPoints
+  // before a zone is ever created, so it's never scored, drawn, or
+  // alerted on. Defaults to MIN_GAP_POINTS (200) — the live server and
+  // findNewClosedFvgs() never pass an override, so production behavior
+  // is unchanged. The backtester passes overrides to compare configs.
+  if (gapSize < minGapPoints) {
+    return null;
+  }
+
   return {
     id: zoneId(symbol, tf, c1, direction),
 
@@ -187,7 +209,7 @@ function fvgFromThree(c1, c2, c3, symbol, tf) {
     upperPrice,
     lowerPrice,
 
-    gapSize: upperPrice - lowerPrice,
+    gapSize,
 
     status: 'ACTIVE',
 
@@ -350,6 +372,11 @@ function detectZones(
   const fillRule =
     opts.fillRule || 'full';
 
+  // Left undefined in normal (live) use, which makes fvgFromThree fall
+  // back to its own MIN_GAP_POINTS default — production behavior is
+  // unaffected. The backtester passes this explicitly to A/B configs.
+  const minGapPoints = opts.minGapPoints;
+
   for (let i = 2; i < candles.length; i++) {
     const c1 = candles[i - 2];
     const c2 = candles[i - 1];
@@ -365,7 +392,8 @@ function detectZones(
         c2,
         c3,
         symbol,
-        tf
+        tf,
+        minGapPoints
       );
 
     if (!base) {
@@ -459,6 +487,7 @@ module.exports = {
 
   WICK_MIN_PCT,
   C2_BODY_MIN_PCT,
+  MIN_GAP_POINTS,
 
   body,
   upperWick,

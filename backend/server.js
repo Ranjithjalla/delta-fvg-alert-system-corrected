@@ -6,7 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
-const { db, recordSystemEvent } = require('./db');
+const { db, recordSystemEvent, upsertLiquidityLevel, dbLiquidityToApi } = require('./db');
 const {
   DeltaFeed,
   TF_ORDER,
@@ -22,6 +22,14 @@ const {
 } = require('./fvgEngine');
 
 const alertService = require('./alertService');
+const {
+  DEFAULT_EQUAL_TOLERANCE_POINTS,
+  buildLevels,
+  findNewConfirmedLevels,
+  sweepEventsForLatestCandle,
+  reconstructLiquidity,
+  qualityScore
+} = require('./liquidityEngine');
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -58,6 +66,10 @@ const state = {
   liveProcessingEnabled: false,
 
   zones: Object.fromEntries(
+    TF_ORDER.map(tf => [tf, new Map()])
+  ),
+
+  liquidity: Object.fromEntries(
     TF_ORDER.map(tf => [tf, new Map()])
   ),
 
@@ -258,6 +270,125 @@ async function initializeZoneState(tf, candles) {
   });
 }
 
+
+
+// =====================================================
+// LIQUIDITY STATE / CONFLUENCE
+// =====================================================
+
+const LIQ_OPTS = {
+  left: Math.max(1, Number(process.env.LIQUIDITY_LEFT || 2)),
+  right: Math.max(1, Number(process.env.LIQUIDITY_RIGHT || 2)),
+  tolerancePoints: Math.max(0, Number(process.env.LIQUIDITY_EQUAL_TOLERANCE_POINTS || DEFAULT_EQUAL_TOLERANCE_POINTS)),
+  minTouches: 1,
+  maxLevels: Math.max(20, Number(process.env.LIQUIDITY_MAX_LEVELS || 80))
+};
+const LIQ_FVG_PROXIMITY = Math.max(0, Number(process.env.LIQUIDITY_FVG_PROXIMITY_POINTS || 500));
+const LIQ_SWEEP_MIN_QUALITY = Math.max(0, Number(process.env.LIQUIDITY_SWEEP_MIN_QUALITY || 0));
+
+function liquidityContext(tf, level) {
+  const zones = [...state.zones[tf].values()];
+  const near = zones.some(z => Math.abs(level.price - z.lowerPrice) <= LIQ_FVG_PROXIMITY || Math.abs(level.price - z.upperPrice) <= LIQ_FVG_PROXIMITY);
+  const bullishFvg = zones.some(z => !z.isIFVG && z.direction === 'bullish' && Math.abs(level.price - z.lowerPrice) <= LIQ_FVG_PROXIMITY * 2);
+  const bearishFvg = zones.some(z => !z.isIFVG && z.direction === 'bearish' && Math.abs(level.price - z.upperPrice) <= LIQ_FVG_PROXIMITY * 2);
+  const htf = TF_ORDER.indexOf(tf) + 1 < TF_ORDER.length ? TF_ORDER[TF_ORDER.indexOf(tf) + 1] : null;
+  let htfAligned = false;
+  if (htf) {
+    const hz = [...state.zones[htf].values()];
+    const desired = level.side === 'sell' ? 'bullish' : 'bearish';
+    htfAligned = hz.some(z => !z.isIFVG && z.direction === desired && z.status !== 'MITIGATED' && z.status !== 'FILLED');
+  }
+  return { fvgNear: near, bullishFvg, bearishFvg, htfAligned };
+}
+
+function initializeLiquidityState(tf, candles) {
+  const reconstructed = reconstructLiquidity(candles, tf, LIQ_OPTS);
+  state.liquidity[tf].clear();
+  for (const level of reconstructed) {
+    const existing = db.prepare('SELECT * FROM liquidity_levels WHERE id=?').get(level.id);
+    const merged = {
+      ...level,
+      symbol: SYMBOL,
+      createdAt: existing ? existing.created_at : Date.now(),
+      sweptAt: existing?.swept_at ?? level.sweptAt,
+      sweepPrice: existing?.sweep_price ?? level.sweepPrice,
+      sweepQuality: existing?.sweep_quality ?? level.sweepQuality
+    };
+    if (existing?.status === 'SWEPT') merged.status = 'SWEPT';
+    upsertLiquidityLevel(merged, SYMBOL);
+    state.liquidity[tf].set(merged.id, merged);
+  }
+  broadcast({ type:'liquidity', tf, levels:[...state.liquidity[tf].values()] });
+}
+
+function mergeNewLiquidityLevels(tf, candles) {
+  const found = findNewConfirmedLevels(candles, tf, LIQ_OPTS);
+  for (const raw of found) {
+    // Once a pool has been swept it is historical liquidity. A later pivot
+    // at the same price can create a fresh active pool, so never merge a new
+    // confirmation into an already-swept level.
+    let existing = [...state.liquidity[tf].values()].find(x => x.status === 'ACTIVE' && x.side === raw.side && Math.abs(x.price - raw.price) <= LIQ_OPTS.tolerancePoints);
+    if (existing) {
+      const touches = existing.touches + 1;
+      existing = {
+        ...existing,
+        price: (existing.price * (touches - 1) + raw.price) / touches,
+        lastTime: Math.max(existing.lastTime, raw.time),
+        touches,
+        equal: touches >= 2,
+        updatedAt: Date.now()
+      };
+    } else {
+      existing = {
+        id: `LIQ_${tf}_${raw.side}_${raw.time}`,
+        timeframe: tf, side: raw.side, price: raw.price,
+        firstTime: raw.time, lastTime: raw.time, touches: 1, equal: false,
+        status:'ACTIVE', sweptAt:null, sweepPrice:null, sweepQuality:0,
+        createdAt:Date.now(), updatedAt:Date.now()
+      };
+    }
+    upsertLiquidityLevel(existing, SYMBOL);
+    state.liquidity[tf].set(existing.id, existing);
+  }
+  const sorted = [...state.liquidity[tf].values()].sort((a,b)=>b.lastTime-a.lastTime).slice(0, LIQ_OPTS.maxLevels);
+  state.liquidity[tf] = new Map(sorted.map(x=>[x.id,x]));
+}
+
+async function processLiquidityClosedCandle(tf, candles) {
+  const latest = candles[candles.length - 1];
+  if (!latest) return;
+
+  const active = [...state.liquidity[tf].values()];
+  const events = sweepEventsForLatestCandle(active, latest, LIQ_OPTS);
+
+  for (const event of events) {
+    if (event.level.sweepQuality < LIQ_SWEEP_MIN_QUALITY) continue;
+    const ctx = liquidityContext(tf, event.level);
+    const score = qualityScore(event.level, ctx);
+    const level = {
+      ...event.level,
+      symbol: SYMBOL,
+      context: ctx,
+      confluenceScore: score,
+      updatedAt: Date.now()
+    };
+    state.liquidity[tf].set(level.id, level);
+    upsertLiquidityLevel(level, SYMBOL);
+
+    broadcast({ type:'liquidity', tf, levels:[...state.liquidity[tf].values()] });
+    broadcast({ type:'alert', event:'LIQUIDITY_SWEEP', liquidity:level, tf, price:level.sweepPrice });
+    if (state.liveProcessingEnabled) {
+      state.lastSignalAt = Date.now();
+      await alertService.sendAlert(level, 'LIQUIDITY_SWEEP', log);
+    }
+    log('[LIQUIDITY] Sweep detected', { tf, side:level.side, id:level.id, price:level.sweepPrice, score });
+  }
+
+  // Only after processing sweeps do we add the newest confirmed pivots.
+  // This prevents the confirmation candle itself from becoming a retroactive sweep alert.
+  mergeNewLiquidityLevels(tf, candles);
+  broadcast({ type:'liquidity', tf, levels:[...state.liquidity[tf].values()] });
+}
 
 // =====================================================
 // PROCESS CLOSED CANDLE
@@ -614,6 +745,7 @@ const feed = new DeltaFeed(
         tf,
         candles
       );
+      initializeLiquidityState(tf, candles);
     }
 
 
@@ -630,6 +762,7 @@ const feed = new DeltaFeed(
         tf,
         candles
       );
+      await processLiquidityClosedCandle(tf, candles);
     }
 
 
@@ -763,6 +896,18 @@ app.get(
 );
 
 
+
+// =====================================================
+// API: LIQUIDITY
+// =====================================================
+
+app.get('/api/liquidity', (req, res) => {
+  const tf = req.query.tf || '5m';
+  if (!TF_ORDER.includes(tf)) return res.status(400).json({ error:'unknown timeframe' });
+  const rows = db.prepare(`SELECT * FROM liquidity_levels WHERE timeframe=? ORDER BY last_time DESC LIMIT 200`).all(tf);
+  res.json(rows.map(dbLiquidityToApi));
+});
+
 // =====================================================
 // API: ALERT HISTORY
 // =====================================================
@@ -825,6 +970,12 @@ app.get(
             AND is_ifvg=0
           `)
           .get().c,
+
+      liquidityActive:
+        db.prepare(`SELECT COUNT(*) c FROM liquidity_levels WHERE status='ACTIVE'`).get().c,
+
+      liquiditySwept:
+        db.prepare(`SELECT COUNT(*) c FROM liquidity_levels WHERE status='SWEPT'`).get().c,
 
       ifvgs:
         db
@@ -1124,6 +1275,8 @@ app.put(
         bear_fvg,
         bull_ifvg,
         bear_ifvg,
+        liquidity_buy,
+        liquidity_sell,
         updated_at
       )
       VALUES(
@@ -1137,6 +1290,8 @@ app.put(
         @bear_fvg,
         @bull_ifvg,
         @bear_ifvg,
+        @liquidity_buy,
+        @liquidity_sell,
         @updated_at
       )
       ON CONFLICT(user_id)
@@ -1150,6 +1305,8 @@ app.put(
         bear_fvg=excluded.bear_fvg,
         bull_ifvg=excluded.bull_ifvg,
         bear_ifvg=excluded.bear_ifvg,
+        liquidity_buy=excluded.liquidity_buy,
+        liquidity_sell=excluded.liquidity_sell,
         updated_at=excluded.updated_at
     `).run({
 
@@ -1182,6 +1339,12 @@ app.put(
 
       bear_ifvg:
         Number(!!s.bear_ifvg),
+
+      liquidity_buy:
+        Number(!!s.liquidity_buy),
+
+      liquidity_sell:
+        Number(!!s.liquidity_sell),
 
       updated_at:
         now
@@ -1246,6 +1409,16 @@ wss.on(
           ]
         })
       );
+    }
+
+
+    // Send liquidity levels
+    for (const tf of TF_ORDER) {
+      ws.send(JSON.stringify({
+        type:'liquidity',
+        tf,
+        levels:[...state.liquidity[tf].values()]
+      }));
     }
 
 

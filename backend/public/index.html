@@ -17,6 +17,8 @@
     --bear:#FF5D6C;
     --ifvg-bull:#F2B84B;
     --ifvg-bear:#9D7BFF;
+    --liq-buy:#FFB84D;
+    --liq-sell:#4DA6FF;
     --accent:#26D8A3;
     --mono: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
     --sans: -apple-system, "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
@@ -99,7 +101,11 @@
   /* ---------- Body layout ---------- */
   .body{ flex:1; display:flex; min-height:0; }
   .chart-wrap{ flex:1; position:relative; min-width:0; }
-  #chart{ display:block; width:100%; height:100%; cursor:crosshair; touch-action:none; }
+  .chart-wrap.chart-fullscreen{ position:fixed; inset:0; z-index:1000; width:100vw; height:100vh; background:var(--bg); }
+  .chart-wrap.chart-fullscreen #chart{ width:100%; height:100%; }
+  .chart-fullscreen-btn{ position:absolute; top:10px; right:12px; z-index:12; font-family:var(--mono); font-size:11px; font-weight:700; background:rgba(16,20,27,.92); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; cursor:pointer; }
+  .chart-fullscreen-btn:hover{ border-color:var(--bull); color:var(--bull); }
+  #chart{ display:block; width:100%; height:100%; cursor:crosshair; }
 
   .hint{
     position:absolute; left:14px; bottom:12px; font-family:var(--mono); font-size:10.5px;
@@ -213,6 +219,7 @@
     </div>
 
     <div class="spacer"></div>
+    <button class="live-btn" id="liqOverlayBtn" title="Toggle the clean liquidity overlay">Liquidity: Nearby</button>
     <button class="live-btn" id="goLiveBtn" title="Return to the latest candles and resume auto-scroll">● Go Live</button>
     <div class="stat" id="lastPriceStat">BTCUSD —</div>
   </div>
@@ -220,6 +227,7 @@
   <div class="body">
     <div class="chart-wrap">
       <canvas id="chart"></canvas>
+      <button class="chart-fullscreen-btn" id="fullscreenBtn" type="button" title="Fullscreen chart">⛶ Full Screen</button>
       <div class="tooltip" id="tooltip"></div>
       <div class="hint">scroll chart to zoom time · scroll price axis to zoom price · drag to pan · dbl-click axis/chart to reset · right-click for menu · press &amp; hold for candle detail · live BTCUSD via your backend</div>
       <div class="loading-msg" id="loadingMsg">loading BTCUSD history from backend…</div>
@@ -252,12 +260,14 @@
             <label class="chk"><input type="checkbox" data-alert-type="bear_fvg" checked><span class="swatch" style="background:var(--bear)"></span>Bearish FVG</label>
             <label class="chk"><input type="checkbox" data-alert-type="bull_ifvg" checked><span class="swatch" style="background:var(--ifvg-bull)"></span>Bullish IFVG</label>
             <label class="chk"><input type="checkbox" data-alert-type="bear_ifvg" checked><span class="swatch" style="background:var(--ifvg-bear)"></span>Bearish IFVG</label>
+            <label class="chk"><input type="checkbox" data-alert-type="liquidity_buy" checked><span class="swatch" style="background:var(--liq-buy)"></span>Buy-side sweep</label>
+            <label class="chk"><input type="checkbox" data-alert-type="liquidity_sell" checked><span class="swatch" style="background:var(--liq-sell)"></span>Sell-side sweep</label>
           </div>
         </div>
       </div>
 
       <div class="side-section" style="padding-bottom:8px;">
-        <div class="side-title" id="ledgerTitle">Zones — 5M</div>
+        <div class="side-title" id="ledgerTitle">Zones — 5M</div><div class="alert-note" id="liquiditySummary">Liquidity: loading…</div>
       </div>
       <div class="ledger" id="ledger"></div>
     </div>
@@ -281,6 +291,7 @@
 
   const dataByTF = { "5m":[], "15m":[], "1h":[], "4h":[] };
   let zonesByTF = { "5m":[], "15m":[], "1h":[], "4h":[] };
+  let liquidityByTF = { "5m":[], "15m":[], "1h":[], "4h":[] };
   let opts = { fillRule:"full", invRule:"close" };
   let dataReady = false;
 
@@ -309,11 +320,12 @@
   async function loadAll(){
     try{
       const results = await Promise.all(TF_ORDER.map(tf => fetchHistory(tf)));
-      TF_ORDER.forEach((tf,i) => { dataByTF[tf] = normalizeCandles(tf, results[i]); });
+      TF_ORDER.forEach((tf,i) => { dataByTF[tf] = results[i]; });
       dataReady = true;
       document.getElementById("loadingMsg").style.display = "none";
       const zoneResults = await Promise.all(TF_ORDER.map(tf => fetch(BACKEND_URL+"/api/zones?tf="+tf).then(r=>r.json())));
-      TF_ORDER.forEach((tf,i) => { zonesByTF[tf] = zoneResults[i]; });
+      const liqResults = await Promise.all(TF_ORDER.map(tf => fetch(BACKEND_URL+"/api/liquidity?tf="+tf).then(r=>r.json())));
+      TF_ORDER.forEach((tf,i) => { zonesByTF[tf] = (zoneResults[i] || []).filter(z => Number(z.gapSize ?? z.gap_size) >= 200); liquidityByTF[tf] = liqResults[i] || []; });
       view = fitInitialView(currentTF);
       applyDeepLinkIfPresent();
       draw();
@@ -338,51 +350,6 @@
 
   let socket = null, reconnectTimer = null;
   let livePrice = null, livePriceAt = 0;
-  const candleResyncing = { "5m":false, "15m":false, "1h":false, "4h":false };
-
-  function normalizeCandles(tf, candles){
-    const interval = TF_MINUTES[tf] * 60000;
-    const sorted = (Array.isArray(candles) ? candles : [])
-      .filter(c => c && Number.isFinite(Number(c.time)) &&
-        Number.isFinite(Number(c.open)) && Number.isFinite(Number(c.high)) &&
-        Number.isFinite(Number(c.low)) && Number.isFinite(Number(c.close)))
-      .map(c => ({...c, time:Number(c.time), open:Number(c.open), high:Number(c.high), low:Number(c.low), close:Number(c.close)}))
-      .sort((a,b)=>a.time-b.time);
-    const unique=[];
-    for(const c of sorted){
-      const last=unique[unique.length-1];
-      if(!last || last.time!==c.time) unique.push(c);
-      else unique[unique.length-1]=c;
-    }
-    return unique.slice(-REST_LIMIT);
-  }
-
-  function candleGapCount(tf, candles){
-    const arr = normalizeCandles(tf, candles);
-    const interval = TF_MINUTES[tf] * 60000;
-    let gaps = 0;
-    for(let i=1;i<arr.length;i++){
-      const delta = arr[i].time - arr[i-1].time;
-      if(delta > interval) gaps += Math.floor(delta/interval)-1;
-    }
-    return gaps;
-  }
-
-  async function repairCandleSeries(tf){
-    if(candleResyncing[tf]) return;
-    candleResyncing[tf]=true;
-    try{
-      const fresh = normalizeCandles(tf, await fetchHistory(tf));
-      if(fresh.length) dataByTF[tf]=fresh;
-      if(tf===currentTF && followLive) snapToLive();
-      requestDraw();
-    } catch(e){
-      // Keep the current stream alive; the backend watchdog/resync remains authoritative.
-    } finally {
-      candleResyncing[tf]=false;
-    }
-  }
-
   function connectSocket(){
     const wsUrl = BACKEND_URL.replace(/^http/i, "ws") + "/ws";
     socket = new WebSocket(wsUrl);
@@ -407,20 +374,22 @@
       if(msg.type === "candles") {
         const tf = msg.tf;
         if(!dataByTF[tf]) return;
-        dataByTF[tf] = normalizeCandles(tf, msg.candles);
+        dataByTF[tf] = msg.candles || [];
         if(tf === currentTF && followLive) snapToLive();
         requestDraw();
         updateGoLiveButton();
-
-        // Never leave a visible timestamp gap on the chart. If a reconnect or
-        // stream hiccup temporarily produces a gap, refresh only that timeframe
-        // from our backend instead of drawing an incomplete series.
-        if(candleGapCount(tf, dataByTF[tf]) > 0) repairCandleSeries(tf);
         return;
       }
 
       if(msg.type === "zones") {
         if(zonesByTF[msg.tf]) zonesByTF[msg.tf] = msg.zones || [];
+        if(msg.tf === currentTF) renderLedger();
+        requestDraw();
+        return;
+      }
+
+      if(msg.type === "liquidity") {
+        if(liquidityByTF[msg.tf]) liquidityByTF[msg.tf] = msg.levels || [];
         if(msg.tf === currentTF) renderLedger();
         requestDraw();
         return;
@@ -448,11 +417,20 @@
       }
 
       if(msg.type === "alert") {
+        if(msg.event === "LIQUIDITY_SWEEP") {
+          const l = msg.liquidity;
+          if(l && liquidityByTF[msg.tf]) {
+            const idx = liquidityByTF[msg.tf].findIndex(x => x.id === l.id);
+            if(idx >= 0) liquidityByTF[msg.tf][idx] = l; else liquidityByTF[msg.tf].push(l);
+            if(msg.tf === currentTF) renderLedger();
+            requestDraw();
+          }
+          return;
+        }
         const z = msg.zone;
         if(z && zonesByTF[z.timeframe]) {
           const idx = zonesByTF[z.timeframe].findIndex(x => x.id === z.id);
-          if(idx >= 0) zonesByTF[z.timeframe][idx] = z;
-          else zonesByTF[z.timeframe].push(z);
+          if(idx >= 0) zonesByTF[z.timeframe][idx] = z; else zonesByTF[z.timeframe].push(z);
           if(z.timeframe === currentTF) renderLedger();
           requestDraw();
         }
@@ -468,134 +446,13 @@
   }
 
   /* =========================================================
-     2. FVG / IFVG DETECTION  (spec-exact, per timeframe)
+     2. AUTHORITATIVE SIGNAL DATA
+     The backend is the sole detector.
+     FVG: 3 CLOSED same-color candles; C1/C3 wick >= 5% body;
+     C2 body >= 60% of range; wick-defined gap; minimum 200 points.
+     Liquidity: confirmed swing/equal highs/lows and closed-candle sweeps.
   ========================================================= */
-  // "C1 and C3 must contain wicks at least 5-10% of that body" — minimum
-  // wick-to-body ratio required on the two candles that define the gap
-  // boundary. Must match backend/fvgEngine.js WICK_MIN_PCT or the chart and
-  // the server-triggered alerts will disagree about which zones are valid.
-  const WICK_MIN_PCT = 0.05;
-  function bodySize(c){ return Math.abs(c.close-c.open) || 1e-8; }
-  function upperWick(c){ return c.high - Math.max(c.open,c.close); }
-  function lowerWick(c){ return Math.min(c.open,c.close) - c.low; }
-  function wickOk(c, side){
-    const wick = side==="upper" ? upperWick(c) : lowerWick(c);
-    return wick >= bodySize(c)*WICK_MIN_PCT;
-  }
-
-  function detectZones(candles, tfKey, o){
-    const zones = [];
-    const n = candles.length;
-    for(let i=1; i<n-1; i++){
-      const c1 = candles[i-1], c2 = candles[i], c3 = candles[i+1];
-      if((i+1) === n-1){
-        // C3 is the last candle in the series → still forming, cannot confirm a new FVG from it (no repaint)
-        continue;
-      }
-
-      let direction = null, upper = 0, lower = 0;
-      if(c1.high < c3.low){
-        if(!wickOk(c1,"upper") || !wickOk(c3,"lower")) continue;
-        direction = "bullish"; upper = c3.low; lower = c1.high;
-      }
-      else if(c1.low > c3.high){
-        if(!wickOk(c1,"lower") || !wickOk(c3,"upper")) continue;
-        direction = "bearish"; upper = c1.low; lower = c3.high;
-      }
-      if(!direction) continue;
-
-      const gapSize = upper - lower;
-      if(gapSize <= 0) continue;
-
-      const zone = {
-        id: tfKey+"_"+c1.time+"_"+direction,
-        timeframe: tfKey,
-        direction,
-        c1Time:c1.time, c2Time:c2.time, c3Time:c3.time,
-        creationTime:c3.time,
-        upperPrice:upper, lowerPrice:lower, gapSize,
-        status:"ACTIVE", fillStatus:"UNFILLED",
-        isIFVG:false, ifvgDirection:null, ifvgTime:null,
-        endTime:null
-      };
-
-      for(let j=i+2;j<n;j++){
-        const cand = candles[j];
-        const mid = (zone.upperPrice+zone.lowerPrice)/2;
-        const intrudes = cand.low <= zone.upperPrice && cand.high >= zone.lowerPrice;
-
-        if(intrudes && zone.fillStatus === "UNFILLED"){
-          zone.fillStatus = "PARTIALLY_FILLED";
-          if(zone.status === "ACTIVE") zone.status = "PARTIALLY_FILLED";
-        }
-
-        if(!zone.isIFVG){
-          // ---- invalidation: price breaks the far boundary → the SAME object flips into an IFVG (never a new zone)
-          let brokeReverse = false;
-          if(o.invRule === "close"){
-            if(direction === "bullish" && cand.close < zone.lowerPrice) brokeReverse = true;
-            if(direction === "bearish" && cand.close > zone.upperPrice) brokeReverse = true;
-          } else {
-            if(direction === "bullish" && cand.low < zone.lowerPrice) brokeReverse = true;
-            if(direction === "bearish" && cand.high > zone.upperPrice) brokeReverse = true;
-          }
-          if(brokeReverse){
-            zone.isIFVG = true;
-            zone.ifvgDirection = direction === "bullish" ? "bearish" : "bullish";
-            zone.status = "IFVG";
-            zone.ifvgTime = cand.time;
-            continue; // tracked as an IFVG from the next candle onward
-          }
-
-          // ---- fill: price comes back and satisfies the configured fill rule → the rectangle closes right here
-          let filledNow = false;
-          if(direction === "bullish"){
-            if(o.fillRule === "touch" && intrudes) filledNow = true;
-            if(o.fillRule === "50" && cand.low <= mid) filledNow = true;
-            if(cand.low <= zone.lowerPrice) filledNow = true; // a complete fill always counts, regardless of rule
-          } else {
-            if(o.fillRule === "touch" && intrudes) filledNow = true;
-            if(o.fillRule === "50" && cand.high >= mid) filledNow = true;
-            if(cand.high >= zone.upperPrice) filledNow = true;
-          }
-          if(filledNow){
-            zone.fillStatus = "FILLED";
-            zone.status = "FILLED";
-            zone.endTime = cand.time;
-            break;
-          }
-        } else {
-          // ---- IFVG mitigation: price closes back through the zone → the rectangle closes right here
-          let mitigated = false;
-          if(o.invRule === "close"){
-            if(zone.ifvgDirection === "bearish" && cand.close > zone.upperPrice) mitigated = true;
-            if(zone.ifvgDirection === "bullish" && cand.close < zone.lowerPrice) mitigated = true;
-          } else {
-            if(zone.ifvgDirection === "bearish" && cand.high > zone.upperPrice) mitigated = true;
-            if(zone.ifvgDirection === "bullish" && cand.low < zone.lowerPrice) mitigated = true;
-          }
-          if(mitigated){
-            zone.fillStatus = "FILLED";
-            zone.status = "MITIGATED";
-            zone.endTime = cand.time;
-            break;
-          }
-        }
-      }
-
-      zone.endTime = zone.endTime || candles[n-1].time;
-      const tfMin = TF_MINUTES[tfKey];
-      const capMs = zone.c1Time + MAX_EXTEND_CANDLES*tfMin*60000;
-      if(zone.endTime > capMs) zone.endTime = capMs;
-      zones.push(zone);
-    }
-    return zones;
-  }
-
-  function recomputeAllZones(){
-    // Authoritative zones come from the server. The browser never decides FVG/IFVG state.
-    return zonesByTF;
-  }
+  const MIN_GAP_POINTS = 200;
 
   /* =========================================================
      2b. PUSH SUBSCRIPTION — talks to the 24/7 backend in /backend.
@@ -689,7 +546,8 @@
     const params = new URLSearchParams(location.search);
     const tf = params.get("tf");
     const fvgId = params.get("fvgId");
-    if(!tf || !fvgId || !TF_MINUTES[tf]) return;
+    const liqId = params.get("liqId");
+    if(!tf || (!fvgId && !liqId) || !TF_MINUTES[tf]) return;
 
     currentTF = tf;
     [...tfTabsEl.children].forEach(b=>b.classList.remove("active"));
@@ -700,13 +558,13 @@
     renderLedger();
 
     try{
-      const res = await fetch(BACKEND_URL+"/api/zones?id="+encodeURIComponent(fvgId));
-      const z = await res.json();
-      if(z){
-        const tfMin = TF_MINUTES[tf];
-        const span = 40*tfMin;
-        view.pxPerMin = clamp((chartWrap.clientWidth-78)/span, 0.006, 60);
-        view.startMs = z.c1_time - span*60000*0.35;
+      if(fvgId){
+        const res = await fetch(BACKEND_URL+"/api/zones?id="+encodeURIComponent(fvgId));
+        const z = await res.json();
+        if(z){ const tfMin=TF_MINUTES[tf], span=40*tfMin; view.pxPerMin=clamp((chartWrap.clientWidth-78)/span,0.006,60); view.startMs=Number(z.c1Time ?? z.c1_time)-span*60000*0.35; }
+      } else if(liqId){
+        const levels=liquidityByTF[tf]||[]; const l=levels.find(x=>x.id===liqId);
+        if(l){ const tfMin=TF_MINUTES[tf], span=40*tfMin; view.pxPerMin=clamp((chartWrap.clientWidth-78)/span,0.006,60); view.startMs=Number(l.lastTime)-span*60000*0.35; }
       }
     } catch(e){ /* backend not reachable — chart still opens on the right timeframe */ }
     draw();
@@ -745,6 +603,42 @@
   const ctx = canvas.getContext("2d");
   const chartWrap = document.querySelector(".chart-wrap");
   const tooltip = document.getElementById("tooltip");
+  const fullscreenBtn = document.getElementById("fullscreenBtn");
+
+  async function toggleChartFullscreen(){
+    try{
+      if(document.fullscreenElement === chartWrap){
+        await document.exitFullscreen();
+      } else {
+        await chartWrap.requestFullscreen();
+      }
+    }catch(e){
+      chartWrap.classList.toggle("chart-fullscreen");
+      resizeCanvas();
+      draw();
+    }
+  }
+
+  function updateFullscreenButton(){
+    const active = document.fullscreenElement === chartWrap || chartWrap.classList.contains("chart-fullscreen");
+    fullscreenBtn.textContent = active ? "⛶ Exit Full Screen" : "⛶ Full Screen";
+    fullscreenBtn.title = active ? "Exit fullscreen chart" : "Fullscreen chart";
+  }
+
+  fullscreenBtn.addEventListener("click", toggleChartFullscreen);
+  document.addEventListener("fullscreenchange", ()=>{
+    updateFullscreenButton();
+    setTimeout(()=>{ resizeCanvas(); draw(); }, 50);
+  });
+
+  document.addEventListener("keydown", e=>{
+    if(e.key === "Escape" && chartWrap.classList.contains("chart-fullscreen")){
+      chartWrap.classList.remove("chart-fullscreen");
+      updateFullscreenButton();
+      resizeCanvas();
+      draw();
+    }
+  });
   let dpr = Math.max(1, window.devicePixelRatio || 1);
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
@@ -833,6 +727,39 @@
   const priceView = { auto:true, center:0, halfRange:1 };
   const lastRange = { minP:0, maxP:1, marginTop:8, plotH:100 };
   let followLive = true;
+  // Chart presentation only: the backend still tracks every liquidity level.
+  // The chart shows only the nearest active levels so liquidity does not cover the screen.
+  const liquidityView = { enabled:true, maxPerSide:2, showSwept:false };
+
+  function chartLiquidityLevels(){
+    if(!liquidityView.enabled) return [];
+    const all = (liquidityByTF[currentTF] || []).filter(l => {
+      const p = Number(l.price);
+      return Number.isFinite(p) && (liquidityView.showSwept || l.status !== "SWEPT");
+    });
+    if(!all.length) return [];
+    const candles = dataByTF[currentTF] || [];
+    const anchor = Number.isFinite(livePrice) ? livePrice : (candles.length ? Number(candles[candles.length-1].close) : NaN);
+    if(!Number.isFinite(anchor)) return [];
+
+    const active = all.filter(l => l.status !== "SWEPT");
+    const source = active.length ? active : all;
+    const buys = source.filter(l => Number(l.price) >= anchor).sort((a,b)=>Number(a.price)-Number(b.price));
+    const sells = source.filter(l => Number(l.price) <= anchor).sort((a,b)=>Number(b.price)-Number(a.price));
+
+    // Deduplicate visually identical levels; preserve EQ metadata where present.
+    const pick = (items) => {
+      const out=[];
+      for(const l of items){
+        const p=Number(l.price);
+        if(out.some(x => Math.abs(Number(x.price)-p) < 0.01)) continue;
+        out.push(l);
+        if(out.length >= liquidityView.maxPerSide) break;
+      }
+      return out;
+    };
+    return [...pick(buys), ...pick(sells)];
+  }
 
   function draw(){
     if(!dataReady) return;
@@ -854,28 +781,7 @@
     let minP, maxP;
     if(priceView.auto){
       let autoMin = Infinity, autoMax = -Infinity;
-
-      // Use the normal candle range for the scale, but prevent one exceptional
-      // flash-move candle from flattening every other candle into 1-pixel lines.
-      // The OHLC values are NEVER changed; only the automatic viewport is made
-      // robust. Extreme candles are still drawn and may extend beyond the plot.
-      const ranges = visible.map(c => Math.max(0, c.high-c.low)).filter(Number.isFinite).sort((a,b)=>a-b);
-      const medianRange = ranges.length ? ranges[Math.floor(ranges.length/2)] : 0;
-      const robustThreshold = medianRange > 0 ? medianRange * 8 : Infinity;
-      visible.forEach(c => {
-        const range = Math.max(0, c.high-c.low);
-        if(range > robustThreshold) {
-          // Keep the candle body/close represented, but don't let its extreme
-          // wick define the entire automatic vertical scale.
-          const coreHigh = Math.max(c.open,c.close);
-          const coreLow = Math.min(c.open,c.close);
-          if(coreLow < autoMin) autoMin=coreLow;
-          if(coreHigh > autoMax) autoMax=coreHigh;
-        } else {
-          if(c.low<autoMin) autoMin=c.low;
-          if(c.high>autoMax) autoMax=c.high;
-        }
-      });
+      visible.forEach(c => { if(c.low<autoMin) autoMin=c.low; if(c.high>autoMax) autoMax=c.high; });
       if(Number.isFinite(livePrice)){
         if(livePrice < autoMin) autoMin = livePrice;
         if(livePrice > autoMax) autoMax = livePrice;
@@ -886,6 +792,7 @@
         if(z.upperPrice>autoMax) autoMax=z.upperPrice;
         if(z.lowerPrice<autoMin) autoMin=z.lowerPrice;
       });
+      chartLiquidityLevels().forEach(l=>{ const p=Number(l.price); if(Number.isFinite(p)){ if(p>autoMax)autoMax=p; if(p<autoMin)autoMin=p; }});
       if(!isFinite(autoMin)){ autoMin = 0; autoMax = 1; }
       const pad = (autoMax-autoMin)*0.10 || (autoMax*0.02) || 1;
       minP = autoMin - pad; maxP = autoMax + pad;
@@ -927,38 +834,71 @@
     }
     ctx.textAlign = "left";
 
-    currentZones.forEach(z=>{
-      if(!zoneTypeVisible(z)) return;
-      const x1 = timeToX(z.c1Time);
-      // Active zones have no endTime (null). In that case, extend the
-      // rectangle forward instead of converting null to time 0, which
-      // collapses the zone to a ~3px sliver. Closed/filled zones keep
-      // their actual endTime.
-      const zoneEndTime = Number.isFinite(Number(z.endTime))
-        ? Number(z.endTime)
-        : z.c1Time + MAX_EXTEND_CANDLES * tfMin * 60000;
-      const x2raw = timeToX(zoneEndTime);
-      const x2 = Math.max(x2raw, x1+3);
-      if(x2 < marginLeft || x1 > marginLeft+plotW) return;
-      const cx1 = clamp(x1, marginLeft, marginLeft+plotW);
-      const cx2 = clamp(x2, marginLeft, marginLeft+plotW);
-      const y1 = priceToY(z.upperPrice), y2 = priceToY(z.lowerPrice);
-      const col = zoneColor(z);
-      ctx.fillStyle = hexToRgba(col, zoneAlpha(z));
-      ctx.fillRect(cx1, y1, Math.max(1,cx2-cx1), Math.max(1,y2-y1));
-      ctx.strokeStyle = hexToRgba(col, z.isIFVG ? 0.85 : 0.55);
-      ctx.lineWidth = 1;
-      if(z.isIFVG){ ctx.setLineDash([4,3]); } else { ctx.setLineDash([]); }
-      ctx.strokeRect(cx1+0.5, y1+0.5, Math.max(1,cx2-cx1)-1, Math.max(1,y2-y1)-1);
-      ctx.setLineDash([]);
+    // Draw zones AFTER candles so the FVG/IFVG overlays cannot be hidden by candle bodies.
+    // Server data is authoritative; normalize both camelCase and snake_case fields.
+    function drawZones(){
+      currentZones.forEach(z=>{
+        if(!zoneTypeVisible(z)) return;
 
-      if(cx2-cx1 > 34 && y2-y1 > 10){
-        const label = TF_LABEL[currentTF]+" "+(z.isIFVG ? (z.ifvgDirection==="bullish"?"IFVG↑":"IFVG↓") : (z.direction==="bullish"?"FVG↑":"FVG↓"));
-        ctx.fillStyle = hexToRgba(col, 0.9);
-        ctx.font = "9.5px " + getComputedStyle(document.body).fontFamily;
-        ctx.fillText(label, cx1+4, y1+3);
-      }
-    });
+        const c1Time = Number.isFinite(Number(z.c1Time)) ? Number(z.c1Time) : Number(z.c1_time);
+        const c3Time = Number.isFinite(Number(z.c3Time)) ? Number(z.c3Time) : Number(z.c3_time);
+        const endField = z.endTime ?? z.end_time;
+        const endTimeValue = Number(endField);
+        const upperPrice = Number.isFinite(Number(z.upperPrice)) ? Number(z.upperPrice) : Number(z.upper_price);
+        const lowerPrice = Number.isFinite(Number(z.lowerPrice)) ? Number(z.lowerPrice) : Number(z.lower_price);
+        if(!Number.isFinite(c1Time) || !Number.isFinite(upperPrice) || !Number.isFinite(lowerPrice)) return;
+
+        // Use the formation candle (C3) when available. This makes the overlay line up
+        // with the actual three-candle pattern rather than starting too far left at C1.
+        const zoneStartTime = Number.isFinite(c3Time) ? c3Time : c1Time;
+        const zoneEndTime = Number.isFinite(endTimeValue) && endTimeValue > 0
+          ? endTimeValue
+          : zoneStartTime + MAX_EXTEND_CANDLES * tfMin * 60000;
+
+        // Do not discard a zone merely because its rectangle starts outside the current
+        // viewport; its price range may still need to be visible after panning/zooming.
+        const x1 = timeToX(zoneStartTime);
+        const x2raw = timeToX(zoneEndTime);
+        const x2 = Math.max(x2raw, x1+8);
+        if(x2 < marginLeft || x1 > marginLeft+plotW) return;
+
+        const cx1 = clamp(x1, marginLeft, marginLeft+plotW);
+        const cx2 = clamp(x2, marginLeft, marginLeft+plotW);
+        const hi = Math.max(upperPrice, lowerPrice);
+        const lo = Math.min(upperPrice, lowerPrice);
+        const y1 = priceToY(hi);
+        const y2 = priceToY(lo);
+        const top = Math.min(y1,y2);
+        const height = Math.max(3, Math.abs(y2-y1));
+        const col = zoneColor(z);
+
+        ctx.save();
+        // More visible than before, while still allowing candles to be seen underneath.
+        ctx.fillStyle = hexToRgba(col, z.isIFVG ? 0.18 : 0.13);
+        ctx.fillRect(cx1, top, Math.max(3,cx2-cx1), height);
+
+        ctx.strokeStyle = hexToRgba(col, z.isIFVG ? 1 : 0.95);
+        ctx.lineWidth = z.status === "ACTIVE" ? 2 : 1.25;
+        ctx.setLineDash(z.isIFVG ? [6,4] : []);
+        ctx.strokeRect(cx1+0.5, top+0.5, Math.max(2,cx2-cx1)-1, Math.max(2,height)-1);
+        ctx.setLineDash([]);
+
+        // Always show both FVG boundaries.
+        ctx.strokeStyle = hexToRgba(col, 0.95);
+        ctx.lineWidth = 1.25;
+        ctx.beginPath(); ctx.moveTo(cx1, y1); ctx.lineTo(cx2, y1); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx1, y2); ctx.lineTo(cx2, y2); ctx.stroke();
+
+        if(cx2-cx1 > 38 && height > 10){
+          const label = TF_LABEL[currentTF]+" "+(z.isIFVG ? (z.ifvgDirection==="bullish"?"IFVG ↑":"IFVG ↓") : (z.direction==="bullish"?"FVG ↑":"FVG ↓"));
+          ctx.fillStyle = col;
+          ctx.font = "bold 10px " + getComputedStyle(document.body).fontFamily;
+          ctx.textBaseline = "top";
+          ctx.fillText(label, cx1+5, top+4);
+        }
+        ctx.restore();
+      });
+    }
 
     visible.forEach(c=>{
       const x = timeToX(c.time);
@@ -975,6 +915,27 @@
       const yO = priceToY(c.open), yC = priceToY(c.close);
       const bodyH = Math.max(1, Math.abs(yC-yO));
       ctx.fillRect(x, Math.min(yO,yC), w, bodyH);
+    });
+
+    drawZones();
+
+    const liquidity = chartLiquidityLevels();
+    liquidity.forEach(l => {
+      const price = Number(l.price); if(!Number.isFinite(price)) return;
+      const y = priceToY(price); if(y < marginTop-2 || y > marginTop+plotH+2) return;
+      const col = l.side === "buy" ? "#FFB84D" : "#4DA6FF";
+      const lineStart = marginLeft + plotW * 0.58;
+      ctx.save();
+      ctx.strokeStyle = hexToRgba(col, 0.72);
+      ctx.lineWidth = 1.1;
+      ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(lineStart,y); ctx.lineTo(marginLeft+plotW,y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = hexToRgba(col, 0.95);
+      ctx.font = "bold 9px " + getComputedStyle(document.body).fontFamily;
+      ctx.textBaseline = "middle";
+      ctx.fillText((l.side === "buy" ? "BSL" : "SSL") + (l.equal ? " EQ" : ""), marginLeft+plotW+8, y);
+      ctx.restore();
     });
 
     if(hoverX!==null && hoverX>=marginLeft && hoverX<=marginLeft+plotW && hoverY>=marginTop && hoverY<=marginTop+plotH){
@@ -1176,83 +1137,25 @@
   let touchState = null;
   canvas.addEventListener("touchstart",(e)=>{
     if(!dataReady) return;
-
     if(e.touches.length===1){
-      const t = e.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      const x = t.clientX - rect.left;
-      const y = t.clientY - rect.top;
-      const onPriceAxis = x > rect.width - PRICE_AXIS_WIDTH;
-
-      if(onPriceAxis){
-        // Mobile: one-finger vertical drag on the price axis pans the entire price scale.
-        let startMin = lastRange.minP;
-        let startMax = lastRange.maxP;
-        if(priceView.auto){
-          priceView.center = (startMin + startMax) / 2;
-          priceView.halfRange = (startMax - startMin) / 2 || 1;
-          priceView.auto = false;
-        }
-        const startHalf = priceView.halfRange || ((startMax-startMin)/2) || 1;
-        const startCenter = priceView.center;
-        touchState = { mode:"pricePan", y:t.clientY, startHalf, startCenter, plotH:lastRange.plotH || 1 };
-      } else {
-        // One-finger chart pan: horizontal moves the time axis, vertical moves the price axis.
-        let startMin = lastRange.minP;
-        let startMax = lastRange.maxP;
-        if(priceView.auto){
-          priceView.center = (startMin + startMax) / 2;
-          priceView.halfRange = (startMax - startMin) / 2 || 1;
-          priceView.auto = false;
-        }
-        touchState = {
-          mode:"pan",
-          x:t.clientX,
-          y:t.clientY,
-          startMs:view.startMs,
-          startCenter:priceView.center,
-          startHalf:priceView.halfRange || ((startMax-startMin)/2) || 1,
-          plotH:lastRange.plotH || 1
-        };
-      }
+      touchState = { mode:"pan", x:e.touches[0].clientX, startMs:view.startMs };
     } else if(e.touches.length===2){
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       touchState = { mode:"pinch", dist:Math.hypot(dx,dy), pxPerMin:view.pxPerMin, startMs:view.startMs,
         midTime: view.startMs + (((e.touches[0].clientX+e.touches[1].clientX)/2 - canvas.getBoundingClientRect().left)/view.pxPerMin)*60000 };
     }
-  }, {passive:false});
-
+  }, {passive:true});
   canvas.addEventListener("touchmove",(e)=>{
     if(!touchState) return;
     e.preventDefault();
-
-    if(touchState.mode==="pricePan" && e.touches.length===1){
-      const dy = e.touches[0].clientY - touchState.y;
-      const pricePerPixel = (touchState.startHalf * 2) / (touchState.plotH || 1);
-      priceView.center = touchState.startCenter + dy * pricePerPixel;
-      priceView.halfRange = touchState.startHalf;
-      priceView.auto = false;
-      followLive = false;
-      updateGoLiveButton();
-      draw();
-    } else if(touchState.mode==="pan" && e.touches.length===1){
-      followLive = false;
-      updateGoLiveButton();
+    followLive = false;
+    updateGoLiveButton();
+    if(touchState.mode==="pan" && e.touches.length===1){
       const dx = e.touches[0].clientX - touchState.x;
-      const dy = e.touches[0].clientY - touchState.y;
       view.startMs = touchState.startMs - (dx/view.pxPerMin)*60000;
-
-      // Vertical drag shifts the visible price range up/down.
-      // Drag up -> candles/price view moves up; drag down -> moves down.
-      const pricePerPixel = (touchState.startHalf * 2) / (touchState.plotH || 1);
-      priceView.center = touchState.startCenter + dy * pricePerPixel;
-      priceView.halfRange = touchState.startHalf;
-      priceView.auto = false;
       draw();
     } else if(touchState.mode==="pinch" && e.touches.length===2){
-      followLive = false;
-      updateGoLiveButton();
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx,dy);
@@ -1264,14 +1167,7 @@
       draw();
     }
   }, {passive:false});
-
-  canvas.addEventListener("touchend",(e)=>{
-    if(e.touches.length===0) touchState = null;
-    else if(e.touches.length===1 && touchState && touchState.mode==="pinch"){
-      // If a pinch ends with one finger, continue as a normal chart pan.
-      touchState = { mode:"pan", x:e.touches[0].clientX, startMs:view.startMs };
-    }
-  });
+  canvas.addEventListener("touchend",()=>{ touchState = null; });
 
   /* =========================================================
      5. UI WIRING — tabs, checkboxes, selects, ledger
@@ -1313,6 +1209,12 @@
     });
   });
 
+  document.getElementById("liqOverlayBtn").addEventListener("click",()=>{
+    liquidityView.enabled = !liquidityView.enabled;
+    document.getElementById("liqOverlayBtn").textContent = liquidityView.enabled ? "Liquidity: Nearby" : "Liquidity: Hidden";
+    if(dataReady){ draw(); }
+  });
+
   document.getElementById("fillRule").addEventListener("change",(e)=>{
     opts.fillRule = e.target.value;
     if(dataReady){ draw(); renderLedger(); }
@@ -1332,36 +1234,33 @@
     return "active";
   }
   function renderLedger(){
-    ledgerTitleEl.textContent = "Zones — " + TF_LABEL[currentTF];
-    const zones = zonesByTF[currentTF].filter(zoneTypeVisible).slice().sort((a,b)=>b.creationTime-a.creationTime).slice(0,80);
+    ledgerTitleEl.textContent = "Zones + Liquidity — " + TF_LABEL[currentTF];
+    const zones = zonesByTF[currentTF].filter(zoneTypeVisible).slice().sort((a,b)=>b.creationTime-a.creationTime).slice(0,60);
+    const liqs = (liquidityByTF[currentTF] || []).slice().sort((a,b)=>b.lastTime-a.lastTime).slice(0,30);
     ledgerEl.innerHTML = "";
-    if(zones.length===0){
-      ledgerEl.innerHTML = '<div class="ledger-empty">No zones match the current filters.</div>';
-      return;
-    }
+    if(zones.length===0 && liqs.length===0){ ledgerEl.innerHTML='<div class="ledger-empty">No FVG/IFVG or liquidity levels found.</div>'; return; }
     zones.forEach(z=>{
-      const dirClass = z.isIFVG ? ("ifvg-"+z.ifvgDirection) : z.direction;
-      const dirLabel = z.isIFVG
-        ? (z.ifvgDirection==="bullish" ? "BULLISH IFVG" : "BEARISH IFVG")
-        : (z.direction==="bullish" ? "BULLISH FVG" : "BEARISH FVG");
-      const item = document.createElement("div");
-      item.className = "zone-item";
-      item.innerHTML =
-        '<div class="zone-top"><span class="zone-dir '+dirClass+'">'+dirLabel+'</span>'+
-        '<span class="zone-badge">'+statusBadge(z)+'</span></div>'+
-        '<div class="zone-range">'+fmtPrice(z.lowerPrice)+' — '+fmtPrice(z.upperPrice)+'  <span style="color:#4B5563">Δ'+fmtPrice(z.gapSize)+'</span></div>'+
+      const dirClass=z.isIFVG?("ifvg-"+z.ifvgDirection):z.direction;
+      const dirLabel=z.isIFVG?(z.ifvgDirection==="bullish"?"BULLISH IFVG":"BEARISH IFVG"):(z.direction==="bullish"?"BULLISH FVG":"BEARISH FVG");
+      const item=document.createElement("div"); item.className="zone-item";
+      item.innerHTML='<div class="zone-top"><span class="zone-dir '+dirClass+'">'+dirLabel+'</span><span class="zone-badge">'+statusBadge(z)+'</span></div>'+
+        '<div class="zone-range">'+fmtPrice(z.lowerPrice)+' — '+fmtPrice(z.upperPrice)+' <span style="color:#4B5563">Δ'+fmtPrice(z.gapSize)+'</span></div>'+
         '<div class="zone-time">'+fmtDateTime(z.creationTime)+'</div>';
-      item.addEventListener("click", ()=>{
-        const tfMin = TF_MINUTES[currentTF];
-        const span = 40*tfMin;
-        view.pxPerMin = clamp((chartWrap.clientWidth-78)/span, 0.006, 60);
-        view.startMs = z.c1Time - span*60000*0.35;
-        draw();
-      });
+      item.addEventListener("click",()=>{const tfMin=TF_MINUTES[currentTF],span=40*tfMin;view.pxPerMin=clamp((chartWrap.clientWidth-78)/span,0.006,60);view.startMs=z.c1Time-span*60000*0.35;draw();});
       ledgerEl.appendChild(item);
     });
+    liqs.forEach(l=>{
+      const item=document.createElement("div"); item.className="zone-item";
+      const side=l.side==="buy"?"BUY-SIDE LIQUIDITY":"SELL-SIDE LIQUIDITY"; const col=l.side==="buy"?"var(--liq-buy)":"var(--liq-sell)";
+      const score=Number(l.confluenceScore);
+      item.innerHTML='<div class="zone-top"><span class="zone-dir" style="color:'+col+'">'+side+(l.equal?' · EQ':'')+'</span><span class="zone-badge">'+(l.status||"ACTIVE")+'</span></div>'+
+        '<div class="zone-range">'+fmtPrice(l.price)+' · '+(l.touches||1)+' touch'+((l.touches||1)===1?'':'es')+(Number.isFinite(score)?' · score '+score:'')+'</div>'+
+        '<div class="zone-time">'+(l.sweptAt?'swept '+fmtDateTime(l.sweptAt)+' @ '+fmtPrice(l.sweepPrice):'active · confirmed '+fmtDateTime(l.lastTime))+'</div>';
+      ledgerEl.appendChild(item);
+    });
+    const active=liqs.filter(x=>x.status==='ACTIVE').length, swept=liqs.filter(x=>x.status==='SWEPT').length;
+    document.getElementById("liquiditySummary").textContent="Liquidity: "+active+" active · "+swept+" swept · BSL/SSL + EQH/EQL";
   }
-
   /* =========================================================
      6. BOOT
   ========================================================= */
