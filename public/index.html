@@ -182,6 +182,53 @@
   .zone-time{ font-size:10px; font-family:var(--mono); color:var(--text-faint); }
 
   ::selection{ background:rgba(38,216,163,0.3); }
+
+  /* ---------- Portable app layout ---------- */
+  .mobile-toolbar,.mobile-drawer-backdrop,.mobile-drawer,.mobile-bottom{display:none;}
+  @media (max-width: 760px){
+    html,body{height:100%;height:100dvh;}
+    body{overflow:hidden;touch-action:none;}
+    #app{height:100dvh;min-height:0;}
+    .topbar{padding:8px 10px 7px;gap:7px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand price" "tf tf";flex:none;}
+    .brand{grid-area:brand;margin:0;min-width:0;}
+    .brand .title{font-size:13px;}
+    .brand .subtitle{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65vw;}
+    #lastPriceStat{grid-area:price;font-size:12px;align-self:center;text-align:right;white-space:nowrap;}
+    .tf-tabs{grid-area:tf;width:100%;overflow-x:auto;gap:3px;padding:3px;scrollbar-width:none;}
+    .tf-tabs::-webkit-scrollbar{display:none;}
+    .tf-tab{flex:1 0 0;min-width:0;padding:8px 10px;font-size:11px;}
+    .control-group,.topbar>.spacer,.topbar>#goLiveBtn{display:none;}
+    .body{position:relative;min-height:0;display:block;}
+    .chart-wrap{width:100%;height:100%;min-height:0;}
+    #chart{width:100%;height:100%;touch-action:none;}
+    .hint{display:none;}
+    .loading-msg{font-size:12px;}
+    .mobile-toolbar{display:flex;position:absolute;z-index:8;left:8px;right:8px;top:8px;align-items:center;justify-content:space-between;pointer-events:none;}
+    .mobile-toolbar button{pointer-events:auto;appearance:none;border:1px solid var(--border);background:rgba(16,20,27,.92);color:var(--text);border-radius:7px;min-height:36px;padding:7px 10px;font-family:var(--mono);font-size:10px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.25);}
+    .mobile-toolbar .live-mini{color:var(--bull);}
+    .mobile-toolbar .menu-mini{font-size:17px;line-height:1;padding:7px 11px;}
+    .mobile-bottom{display:grid;grid-template-columns:repeat(3,1fr);position:absolute;z-index:8;left:8px;right:8px;bottom:8px;gap:6px;pointer-events:none;}
+    .mobile-bottom button{pointer-events:auto;appearance:none;border:1px solid var(--border);background:rgba(16,20,27,.94);color:var(--text);border-radius:7px;min-height:38px;font-family:var(--mono);font-size:10px;font-weight:700;}
+    .mobile-drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:30;}
+    .mobile-drawer{position:fixed;z-index:31;right:0;top:0;bottom:0;width:min(92vw,380px);background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease;box-shadow:-12px 0 30px rgba(0,0,0,.45);}
+    .mobile-drawer.open{transform:translateX(0);}
+    .mobile-drawer-backdrop.open{display:block;}
+    .mobile-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border-bottom:1px solid var(--border);}
+    .mobile-drawer-title{font-size:12px;font-weight:700;letter-spacing:.04em;}
+    .mobile-drawer-close{appearance:none;border:1px solid var(--border);background:var(--panel-2);color:var(--text);border-radius:6px;width:34px;height:34px;font-size:18px;}
+    .mobile-drawer-body{overflow:auto;padding-bottom:20px;}
+    .mobile-drawer .sidebar{width:100%;border:0;display:block;}
+    .mobile-drawer .ledger{max-height:none;overflow:visible;}
+    .mobile-drawer .side-section{padding:13px 14px;}
+    .mobile-drawer .chk{min-height:34px;}
+    .mobile-drawer .alert-input{min-height:40px;}
+    .mobile-axis-note{position:absolute;right:4px;top:50%;transform:translateY(-50%) rotate(-90deg);transform-origin:center;z-index:4;color:var(--text-faint);font:8px var(--mono);letter-spacing:.08em;pointer-events:none;opacity:.7;}
+    .sidebar{display:none;}
+  }
+  @media (min-width: 761px){
+    .mobile-drawer-backdrop,.mobile-drawer,.mobile-toolbar,.mobile-bottom,.mobile-axis-note{display:none!important;}
+  }
+
 </style>
 </head>
 <body>
@@ -218,6 +265,16 @@
   </div>
 
   <div class="body">
+    <div class="mobile-toolbar">
+      <button class="live-mini" id="mobileLiveBtn">● LIVE</button>
+      <button class="menu-mini" id="mobileMenuBtn" aria-label="Open settings">☰</button>
+    </div>
+    <div class="mobile-bottom">
+      <button id="mobileResetBtn">RESET</button>
+      <button id="mobileZonesBtn">ZONES</button>
+      <button id="mobilePushBtn">ALERTS</button>
+    </div>
+    <div class="mobile-axis-note">PRICE SCALE</div>
     <div class="chart-wrap">
       <canvas id="chart"></canvas>
       <div class="tooltip" id="tooltip"></div>
@@ -262,6 +319,56 @@
       <div class="ledger" id="ledger"></div>
     </div>
   </div>
+
+  <div class="mobile-drawer-backdrop" id="mobileDrawerBackdrop"></div>
+  <aside class="mobile-drawer" id="mobileDrawer" aria-hidden="true">
+    <div class="mobile-drawer-head">
+      <div class="mobile-drawer-title">FVG / IFVG CONTROLS</div>
+      <button class="mobile-drawer-close" id="mobileDrawerClose" aria-label="Close settings">×</button>
+    </div>
+    <div class="mobile-drawer-body">
+      <div class="sidebar">
+        <div class="side-section">
+          <div class="side-title">Zone types</div>
+          <div class="checks">
+            <label class="chk"><input type="checkbox" data-mobile-type="bullFVG" checked><span class="swatch" style="background:var(--bull)"></span>Bullish FVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-type="bearFVG" checked><span class="swatch" style="background:var(--bear)"></span>Bearish FVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-type="bullIFVG" checked><span class="swatch" style="background:var(--ifvg-bull)"></span>Bullish IFVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-type="bearIFVG" checked><span class="swatch" style="background:var(--ifvg-bear)"></span>Bearish IFVG</label>
+          </div>
+        </div>
+        <div class="side-section">
+          <div class="side-title">Chart rules</div>
+          <div class="control-group" style="display:flex;margin-bottom:9px;justify-content:space-between;"><label>Fill rule</label><select id="mobileFillRule"><option value="touch">Touch</option><option value="50">50% fill</option><option value="full" selected>Full fill</option></select></div>
+          <div class="control-group" style="display:flex;justify-content:space-between;"><label>Invalidate on</label><select id="mobileInvRule"><option value="close" selected>Candle close</option><option value="wick">Wick break</option></select></div>
+        </div>
+        <div class="side-section">
+          <div class="side-title">Push alerts</div>
+          <button class="live-btn off-live" id="mobileSubscribeBtn" style="width:100%;">Enable push notifications</button>
+          <div id="mobilePushStatus" class="alert-note" style="margin-top:8px;">24/7 server alerts can reach this device after permission is enabled.</div>
+        </div>
+        <div class="side-section">
+          <div class="side-title">Alert timeframes</div>
+          <div class="checks">
+            <label class="chk"><input type="checkbox" data-mobile-alert-tf="5m" checked>5M</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-tf="15m" checked>15M</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-tf="1h" checked>1H</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-tf="4h" checked>4H</label>
+          </div>
+        </div>
+        <div class="side-section">
+          <div class="side-title">Alert types</div>
+          <div class="checks">
+            <label class="chk"><input type="checkbox" data-mobile-alert-type="bull_fvg" checked><span class="swatch" style="background:var(--bull)"></span>Bullish FVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-type="bear_fvg" checked><span class="swatch" style="background:var(--bear)"></span>Bearish FVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-type="bull_ifvg" checked><span class="swatch" style="background:var(--ifvg-bull)"></span>Bullish IFVG</label>
+            <label class="chk"><input type="checkbox" data-mobile-alert-type="bear_ifvg" checked><span class="swatch" style="background:var(--ifvg-bear)"></span>Bearish IFVG</label>
+          </div>
+        </div>
+        <div class="side-section"><div class="side-title">Current zones</div><div class="ledger" id="mobileLedger"></div></div>
+      </div>
+    </div>
+  </aside>
 
   <div class="ctx-menu" id="ctxMenu" style="display:none;">
     <div class="ctx-item" id="ctxReset">Reset chart</div>
@@ -1173,159 +1280,42 @@
     ctxMenu.style.display = "none";
   });
 
-  // Mobile touch behavior — Delta-style chart interaction:
-  //   • one finger on chart: horizontal/time pan ONLY (vertical movement does not
-  //     change the price scale)
-  //   • one finger on the price scale: vertical drag changes PRICE ZOOM/scale
-  //     (up = zoom in, down = zoom out), with the touched price kept anchored
-  //   • two fingers on the chart: pinch zooms time, centered at the pinch midpoint
-  // The price scale and chart are intentionally separate interaction surfaces.
+  // Mobile touch behavior — portable chart interaction:
+  // chart surface = time pan/pinch only; price-axis surface = price-scale zoom only.
   let touchState = null;
-
-  function touchPoint(t, rect){
-    return { x:t.clientX-rect.left, y:t.clientY-rect.top };
-  }
-
-  function currentPriceAtY(y){
-    const range = lastRange;
-    const h = range.plotH || 1;
-    return range.maxP - ((y-range.marginTop)/h)*(range.maxP-range.minP);
-  }
-
-  canvas.addEventListener("touchstart",(e)=>{
-    if(!dataReady) return;
-    e.preventDefault();
-
-    const rect = canvas.getBoundingClientRect();
-
+  function touchPoint(t,rect){ return {x:t.clientX-rect.left,y:t.clientY-rect.top}; }
+  function currentPriceAtY(y){ const h=lastRange.plotH||1; return lastRange.maxP-((y-lastRange.marginTop)/h)*(lastRange.maxP-lastRange.minP); }
+  canvas.addEventListener("touchstart",e=>{
+    if(!dataReady) return; e.preventDefault(); const rect=canvas.getBoundingClientRect();
     if(e.touches.length===2){
-      const a=e.touches[0], b=e.touches[1];
-      const dx=a.clientX-b.clientX, dy=a.clientY-b.clientY;
-      const midX=(a.clientX+b.clientX)/2-rect.left;
-      touchState={
-        mode:"pinch",
-        dist:Math.max(1,Math.hypot(dx,dy)),
-        pxPerMin:view.pxPerMin,
-        midTime:view.startMs+(midX/view.pxPerMin)*60000
-      };
-      followLive=false;
-      updateGoLiveButton();
-      return;
+      const a=e.touches[0],b=e.touches[1],dx=a.clientX-b.clientX,dy=a.clientY-b.clientY,midX=(a.clientX+b.clientX)/2-rect.left;
+      touchState={mode:"pinch",dist:Math.max(1,Math.hypot(dx,dy)),pxPerMin:view.pxPerMin,midTime:view.startMs+(midX/view.pxPerMin)*60000}; followLive=false; updateGoLiveButton(); return;
     }
-
     if(e.touches.length===1){
-      const t=e.touches[0];
-      const pt=touchPoint(t,rect);
-      const onPriceAxis=pt.x >= rect.width-PRICE_AXIS_WIDTH;
-
+      const t=e.touches[0],pt=touchPoint(t,rect),onPriceAxis=pt.x>=rect.width-PRICE_AXIS_WIDTH;
       if(onPriceAxis){
-        // Lock the current scale once at gesture start. Never recompute the
-        // starting range from a changing frame while the finger is moving.
-        const half=priceView.auto
-          ? Math.max((lastRange.maxP-lastRange.minP)/2, 1e-8)
-          : Math.max(priceView.halfRange, 1e-8);
-        const center=priceView.auto
-          ? (lastRange.maxP+lastRange.minP)/2
-          : priceView.center;
-
-        touchState={
-          mode:"priceScale",
-          startY:t.clientY,
-          startHalf:half,
-          startCenter:center,
-          anchorY:pt.y,
-          anchorPrice:currentPriceAtY(pt.y),
-          anchorRatio:clamp(
-            (pt.y-lastRange.marginTop)/(lastRange.plotH||1),0,1
-          )
-        };
-
-        // Freeze auto-fit immediately so the gesture is stable.
-        priceView.auto=false;
-        priceView.halfRange=half;
-        priceView.center=center;
-        followLive=false;
-        updateGoLiveButton();
-        return;
+        const half=priceView.auto?Math.max((lastRange.maxP-lastRange.minP)/2,1e-8):Math.max(priceView.halfRange,1e-8);
+        const center=priceView.auto?(lastRange.maxP+lastRange.minP)/2:priceView.center;
+        touchState={mode:"priceScale",startY:t.clientY,startHalf:half,startCenter:center,anchorPrice:currentPriceAtY(pt.y),anchorRatio:clamp((pt.y-lastRange.marginTop)/(lastRange.plotH||1),0,1)};
+        priceView.auto=false; priceView.halfRange=half; priceView.center=center; followLive=false; updateGoLiveButton(); return;
       }
-
-      // Chart surface: horizontal time pan only.
-      touchState={
-        mode:"pan",
-        startX:t.clientX,
-        startMs:view.startMs
-      };
+      touchState={mode:"pan",startX:t.clientX,startMs:view.startMs};
     }
-  }, {passive:false});
-
-  canvas.addEventListener("touchmove",(e)=>{
-    if(!touchState) return;
-    e.preventDefault();
-
-    const rect=canvas.getBoundingClientRect();
-
-    if(touchState.mode==="priceScale" && e.touches.length===1){
-      const t=e.touches[0];
-
-      // Match Delta-style price-scale manipulation: the amount of vertical
-      // finger movement changes the vertical price compression exponentially.
-      // Up => smaller visible range (zoom in), down => larger range (zoom out).
-      const dy=t.clientY-touchState.startY;
-      const zoom=Math.exp(dy*0.0065);
-      const newHalf=clamp(
-        touchState.startHalf*zoom,
-        0.5,
-        Math.max(1000000,touchState.startHalf*40)
-      );
-
-      // Keep the price originally touched under the finger at the same
-      // relative position on the price scale.
-      const ratio=touchState.anchorRatio;
-      priceView.halfRange=newHalf;
-      priceView.center=
-        touchState.anchorPrice + (ratio-0.5)*(newHalf*2);
-      priceView.auto=false;
-
-      draw();
-      return;
+  },{passive:false});
+  canvas.addEventListener("touchmove",e=>{
+    if(!touchState) return; e.preventDefault(); const rect=canvas.getBoundingClientRect();
+    if(touchState.mode==="priceScale"&&e.touches.length===1){
+      const dy=e.touches[0].clientY-touchState.startY,newHalf=clamp(touchState.startHalf*Math.exp(dy*.0065),.5,Math.max(1000000,touchState.startHalf*40));
+      priceView.halfRange=newHalf; priceView.center=touchState.anchorPrice+(touchState.anchorRatio-.5)*(newHalf*2); priceView.auto=false; draw(); return;
     }
-
-    if(touchState.mode==="pan" && e.touches.length===1){
-      const dx=e.touches[0].clientX-touchState.startX;
-      view.startMs=touchState.startMs-(dx/view.pxPerMin)*60000;
-      followLive=false;
-      updateGoLiveButton();
-      draw();
-      return;
+    if(touchState.mode==="pan"&&e.touches.length===1){ const dx=e.touches[0].clientX-touchState.startX; view.startMs=touchState.startMs-(dx/view.pxPerMin)*60000; followLive=false; updateGoLiveButton(); draw(); return; }
+    if(touchState.mode==="pinch"&&e.touches.length===2){
+      const a=e.touches[0],b=e.touches[1],dx=a.clientX-b.clientX,dy=a.clientY-b.clientY,dist=Math.max(1,Math.hypot(dx,dy)),factor=dist/touchState.dist;
+      view.pxPerMin=clamp(touchState.pxPerMin*factor,.006,60); const midX=(a.clientX+b.clientX)/2-rect.left; view.startMs=touchState.midTime-(midX/view.pxPerMin)*60000; followLive=false; updateGoLiveButton(); draw();
     }
-
-    if(touchState.mode==="pinch" && e.touches.length===2){
-      const a=e.touches[0], b=e.touches[1];
-      const dx=a.clientX-b.clientX, dy=a.clientY-b.clientY;
-      const dist=Math.max(1,Math.hypot(dx,dy));
-      const factor=dist/touchState.dist;
-
-      view.pxPerMin=clamp(touchState.pxPerMin*factor,0.006,60);
-
-      const midX=(a.clientX+b.clientX)/2-rect.left;
-      view.startMs=touchState.midTime-(midX/view.pxPerMin)*60000;
-
-      followLive=false;
-      updateGoLiveButton();
-      draw();
-    }
-  }, {passive:false});
-
-  canvas.addEventListener("touchend",(e)=>{
-    if(e.touches.length===0){
-      touchState=null;
-      if(dataReady) draw();
-    }
-  }, {passive:true});
-
-  canvas.addEventListener("touchcancel",()=>{
-    touchState=null;
-  }, {passive:true});
+  },{passive:false});
+  canvas.addEventListener("touchend",e=>{if(e.touches.length===0)touchState=null;},{passive:true});
+  canvas.addEventListener("touchcancel",()=>{touchState=null;},{passive:true});
 
   /* =========================================================
      5. UI WIRING — tabs, checkboxes, selects, ledger
@@ -1415,6 +1405,74 @@
       ledgerEl.appendChild(item);
     });
   }
+
+  /* =========================================================
+     PORTABLE MOBILE UI
+  ========================================================= */
+  const mobileDrawer = document.getElementById("mobileDrawer");
+  const mobileBackdrop = document.getElementById("mobileDrawerBackdrop");
+  const mobileLedger = document.getElementById("mobileLedger");
+  function openMobileDrawer(){ mobileDrawer.classList.add("open"); mobileBackdrop.classList.add("open"); mobileDrawer.setAttribute("aria-hidden","false"); }
+  function closeMobileDrawer(){ mobileDrawer.classList.remove("open"); mobileBackdrop.classList.remove("open"); mobileDrawer.setAttribute("aria-hidden","true"); }
+  document.getElementById("mobileMenuBtn").addEventListener("click",openMobileDrawer);
+  document.getElementById("mobileDrawerClose").addEventListener("click",closeMobileDrawer);
+  mobileBackdrop.addEventListener("click",closeMobileDrawer);
+  document.getElementById("mobileLiveBtn").addEventListener("click",()=>{ goLive(); draw(); updateGoLiveButton(); });
+  document.getElementById("mobileResetBtn").addEventListener("click",resetChart);
+  document.getElementById("mobileZonesBtn").addEventListener("click",openMobileDrawer);
+  document.getElementById("mobilePushBtn").addEventListener("click",openMobileDrawer);
+
+  function syncMobileZoneFilters(){
+    document.querySelectorAll("[data-mobile-type]").forEach(cb=>{
+      typeEnabledCfg[cb.dataset.mobileType]=cb.checked;
+      const desktop=document.querySelector('[data-type="'+cb.dataset.mobileType+'"]');
+      if(desktop) desktop.checked=cb.checked;
+    });
+    if(dataReady){ draw(); renderLedger(); }
+  }
+  document.querySelectorAll("[data-mobile-type]").forEach(cb=>cb.addEventListener("change",syncMobileZoneFilters));
+
+  document.getElementById("mobileFillRule").addEventListener("change",e=>{ opts.fillRule=e.target.value; document.getElementById("fillRule").value=e.target.value; if(dataReady) draw(); renderLedger(); });
+  document.getElementById("mobileInvRule").addEventListener("change",e=>{ opts.invRule=e.target.value; document.getElementById("invRule").value=e.target.value; if(dataReady) draw(); renderLedger(); });
+
+  const mobileSubscribeBtn=document.getElementById("mobileSubscribeBtn");
+  const mobilePushStatus=document.getElementById("mobilePushStatus");
+  mobileSubscribeBtn.addEventListener("click",async()=>{
+    try{
+      const reg=await navigator.serviceWorker.register("/sw.js");
+      const perm=await Notification.requestPermission();
+      if(perm!=="granted"){ mobilePushStatus.textContent="Notification permission was not granted."; return; }
+      const keyRes=await fetch(BACKEND_URL+"/api/vapid-public-key");
+      const {key}=await keyRes.json();
+      const subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(key)});
+      await fetch(BACKEND_URL+"/api/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId,subscription})});
+      mobileSubscribeBtn.textContent="✓ Push enabled"; mobileSubscribeBtn.className="live-btn on-live"; mobilePushStatus.textContent="This phone is subscribed to server-side alerts.";
+      loadSettingsIntoUI();
+    }catch(e){ mobilePushStatus.textContent="Couldn't enable push: "+e.message; }
+  });
+  document.querySelectorAll("[data-mobile-alert-tf],[data-mobile-alert-type]").forEach(cb=>cb.addEventListener("change",async()=>{
+    const s={user_id:userId,push_enabled:1};
+    document.querySelectorAll("[data-mobile-alert-tf]").forEach(x=>s["tf_"+x.dataset.mobileAlertTf]=x.checked?1:0);
+    document.querySelectorAll("[data-mobile-alert-type]").forEach(x=>s[x.dataset.mobileAlertType]=x.checked?1:0);
+    try{await fetch(BACKEND_URL+"/api/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)});}catch(e){}
+  }));
+
+  const originalRenderLedger=renderLedger;
+  renderLedger=function(){
+    originalRenderLedger();
+    if(!mobileLedger) return;
+    const zones=zonesByTF[currentTF].filter(zoneTypeVisible).slice().sort((a,b)=>b.creationTime-a.creationTime).slice(0,80);
+    mobileLedger.innerHTML="";
+    if(!zones.length){ mobileLedger.innerHTML='<div class="ledger-empty">No zones match the current filters.</div>'; return; }
+    zones.forEach(z=>{
+      const dirClass=z.isIFVG?("ifvg-"+z.ifvgDirection):z.direction;
+      const dirLabel=z.isIFVG?(z.ifvgDirection==="bullish"?"BULLISH IFVG":"BEARISH IFVG"):(z.direction==="bullish"?"BULLISH FVG":"BEARISH FVG");
+      const item=document.createElement("div"); item.className="zone-item";
+      item.innerHTML='<div class="zone-top"><span class="zone-dir '+dirClass+'">'+dirLabel+'</span><span class="zone-badge">'+statusBadge(z)+'</span></div><div class="zone-range">'+fmtPrice(z.lowerPrice)+' — '+fmtPrice(z.upperPrice)+' <span style="color:#4B5563">Δ'+fmtPrice(z.gapSize)+'</span></div><div class="zone-time">'+fmtDateTime(z.creationTime)+'</div>';
+      item.addEventListener("click",()=>{ const tfMin=TF_MINUTES[currentTF],span=40*tfMin; view.pxPerMin=clamp((chartWrap.clientWidth-78)/span,0.006,60); view.startMs=z.c1Time-span*60000*.35; closeMobileDrawer(); draw(); });
+      mobileLedger.appendChild(item);
+    });
+  };
 
   /* =========================================================
      6. BOOT
